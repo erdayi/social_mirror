@@ -1,0 +1,148 @@
+// Prisma Schema for social_adapt_a2a
+// 数据库: MySQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// 用户表 - 存储 SecondMe OAuth 信息
+model User {
+  id            String   @id @default(cuid())
+  secondMeId    String   @unique // SecondMe 用户 ID
+  accessToken   String   // OAuth access token
+  refreshToken  String?  // OAuth refresh token
+  tokenExpiresAt DateTime? // Token 过期时间
+
+  // 用户资料
+  name          String?
+  avatar        String?
+  email         String?
+
+  // 社交成长记录
+  growthRecords  GrowthRecord[]
+  // 笔记
+  notes         Note[]
+  // 聊天会话
+  chatSessions  ChatSession[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("users")
+}
+
+// 社交成长记录
+model GrowthRecord {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  // 记录类型: scenario_practice(场景练习), advice(建议), achievement(成就)
+  type        String
+
+  // 标题和内容
+  title       String
+  content     String?  @db.Text
+
+  // 场景类型 (用于场景模拟)
+  scenarioType String? // greeting, conversation, conflict, interview, etc.
+
+  // 分数/进度
+  score       Int?     // 0-100
+
+  createdAt   DateTime @default(now())
+
+  @@map("growth_records")
+}
+
+// 笔记
+model Note {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  title       String
+  content     String   @db.Text
+
+  // 标签
+  tags        String?  // JSON array of tags
+
+  // 是否关联 SecondMe
+  secondMeRelated Boolean @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("notes")
+}
+
+// 聊天会话
+model ChatSession {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  // 会话类型: practice(练习), advice(建议), community(社区)
+  sessionType String
+
+  // 场景描述
+  scenario    String?  @db.Text
+
+  // 会话标题
+  title       String?
+
+  // 消息
+  messages    Message[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("chat_sessions")
+}
+
+// 消息
+model Message {
+  id          String   @id @default(cuid())
+  sessionId   String
+  session     ChatSession @relation(fields: [sessionId], references: [id])
+
+  // 角色: user, assistant
+  role        String
+
+  // 消息内容
+  content     String   @db.Text
+
+  createdAt   DateTime @default(now())
+
+  @@map("messages")
+}
+
+// 社区帖子
+model CommunityPost {
+  id          String   @id @default(cuid())
+
+  // 作者 SecondMe ID
+  authorId    String
+  authorName  String
+  authorAvatar String?
+
+  // 帖子内容
+  title       String
+  content     String   @db.Text
+
+  // 标签
+  tags        String?  // JSON array
+
+  // 点赞数
+  likes       Int      @default(0)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("community_posts")
+}

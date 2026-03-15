@@ -1,0 +1,51 @@
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&family=Press+Start+2P&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #FFFBF5;
+  --foreground: #1a1a1a;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: 'Nunito', sans-serif;
+}
+
+/* 像素风格按钮 */
+@layer components {
+  .btn-pixel {
+    @apply px-4 py-2 font-pixel text-sm bg-primary-400 text-white rounded-pixel;
+    @apply transition-all duration-150;
+    box-shadow: 4px 4px 0px 0px rgba(0,0,0,0.1);
+  }
+
+  .btn-pixel:hover {
+    box-shadow: 2px 2px 0px 0px rgba(0,0,0,0.1);
+    transform: translate(2px, 2px);
+  }
+
+  .btn-cute {
+    @apply px-4 py-2 font-cute font-semibold bg-primary-400 text-white rounded-cute;
+    @apply transition-all duration-200;
+    box-shadow: 0 4px 14px rgba(249, 115, 22, 0.15);
+  }
+
+  .btn-cute:hover {
+    @apply bg-primary-500;
+  }
+
+  .card-pixel {
+    @apply bg-surface rounded-pixel p-4;
+    @apply border-2 border-primary-200;
+    box-shadow: 4px 4px 0px 0px rgba(0,0,0,0.1);
+  }
+
+  .card-cute {
+    @apply bg-surface rounded-cute p-4;
+    box-shadow: 0 4px 14px rgba(249, 115, 22, 0.15);
+  }
+}
