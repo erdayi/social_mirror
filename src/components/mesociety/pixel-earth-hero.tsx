@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { WorldAgentSprite } from '@/components/mesociety/world-agent-sprite'
-import type { HomeAgentView, HomeWorldView } from '@/lib/mesociety/types'
+import type { WorldAgentView, WorldStateView } from '@/lib/mesociety/types'
 
 type SessionView = {
   user: {
@@ -16,7 +16,7 @@ type SessionView = {
 } | null
 
 type Props = {
-  world: HomeWorldView
+  world: WorldStateView
   session: SessionView
 }
 
@@ -69,11 +69,11 @@ function clip(value: string, max = 22) {
   return value.length > max ? `${value.slice(0, max)}…` : value
 }
 
-function buildFeaturedAgents(world: HomeWorldView, session: SessionView) {
-  const queue: HomeAgentView[] = []
+function buildFeaturedAgents(world: WorldStateView, session: SessionView) {
+  const queue: WorldAgentView[] = []
   const seen = new Set<string>()
 
-  const push = (agent: HomeAgentView | undefined) => {
+  const push = (agent: WorldAgentView | undefined) => {
     if (!agent || seen.has(agent.id)) {
       return
     }
@@ -99,7 +99,7 @@ function buildFeaturedAgents(world: HomeWorldView, session: SessionView) {
   return queue.slice(0, orbitSlots.length)
 }
 
-function buildLiveFeed(world: HomeWorldView) {
+function buildLiveFeed(world: WorldStateView) {
   const turnLines = (world.activeRoundtable?.turns || []).slice(-2).map((turn) => ({
     id: turn.id,
     title: turn.speakerName || '系统',
@@ -115,7 +115,7 @@ function buildLiveFeed(world: HomeWorldView) {
   return [...turnLines, ...eventLines].slice(0, 4)
 }
 
-function buildFeatureText(world: HomeWorldView) {
+function buildFeatureText(world: WorldStateView) {
   return [
     {
       title: '实时聊天',

@@ -87,39 +87,6 @@ export type WorldStateView = {
   zhihu: ZhihuStatusView[]
 }
 
-export type HomeAgentView = Pick<
-  WorldAgentView,
-  'id' | 'name' | 'source' | 'status' | 'pixelRole' | 'pixelPalette'
->
-
-export type HomeLeaderboardEntry = Pick<LeaderboardEntry, 'agentId' | 'name' | 'totalScore'>
-
-export type HomeRoundtableView = {
-  id: string
-  hostId: string
-  topic: string
-  turns: Array<{
-    id: string
-    speakerName: string | null
-    content: string
-  }>
-}
-
-export type HomeEventView = {
-  id: string
-  type: string
-  actorName?: string
-  summary?: string | null
-}
-
-export type HomeWorldView = {
-  tickCount: number
-  agents: HomeAgentView[]
-  leaderboard: HomeLeaderboardEntry[]
-  activeRoundtable: HomeRoundtableView | null
-  recentEvents: HomeEventView[]
-}
-
 export type AgentDetailView = {
   agent: WorldAgentView & {
     bio: string | null
