@@ -1,51 +1,170 @@
-@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&family=Press+Start+2P&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Press+Start+2P&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --background: #FFFBF5;
-  --foreground: #1a1a1a;
+  color-scheme: light;
+  --bg: #f6f2d8;
+  --panel: rgba(255, 252, 241, 0.88);
+  --ink: #1f2937;
+  --forest: #2f5d3d;
+  --forest-soft: #cfe8d4;
+  --amber: #f0b65a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at top, rgba(255, 253, 241, 0.98), rgba(231, 245, 232, 0.95) 42%, rgba(199, 227, 206, 0.94)),
+    var(--bg);
+  color: var(--ink);
   font-family: 'Nunito', sans-serif;
 }
 
-/* 像素风格按钮 */
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
 @layer components {
-  .btn-pixel {
-    @apply px-4 py-2 font-pixel text-sm bg-primary-400 text-white rounded-pixel;
-    @apply transition-all duration-150;
-    box-shadow: 4px 4px 0px 0px rgba(0,0,0,0.1);
+  .world-card {
+    @apply rounded-[28px] border border-emerald-200/80 bg-white/70 shadow-[0_18px_48px_rgba(38,96,62,0.12)] backdrop-blur-sm;
+    box-shadow:
+      0 18px 48px rgba(38, 96, 62, 0.12),
+      inset 0 0 0 2px rgba(255, 247, 231, 0.65);
   }
 
-  .btn-pixel:hover {
-    box-shadow: 2px 2px 0px 0px rgba(0,0,0,0.1);
-    transform: translate(2px, 2px);
+  .zone-card {
+    @apply rounded-[26px] border border-emerald-200/80 bg-white/75 p-4 shadow-[0_12px_30px_rgba(35,90,54,0.10)];
   }
 
-  .btn-cute {
-    @apply px-4 py-2 font-cute font-semibold bg-primary-400 text-white rounded-cute;
-    @apply transition-all duration-200;
-    box-shadow: 0 4px 14px rgba(249, 115, 22, 0.15);
+  .stardew-header {
+    background:
+      linear-gradient(180deg, rgba(255, 250, 240, 0.94), rgba(255, 248, 236, 0.88)),
+      rgba(255, 251, 243, 0.88);
   }
 
-  .btn-cute:hover {
-    @apply bg-primary-500;
+  .pixel-brand {
+    font-family: 'Press Start 2P', cursive;
+    font-size: 0.95rem;
+    letter-spacing: 0.04em;
+    color: #244b34;
   }
 
-  .card-pixel {
-    @apply bg-surface rounded-pixel p-4;
-    @apply border-2 border-primary-200;
-    box-shadow: 4px 4px 0px 0px rgba(0,0,0,0.1);
+  .pixel-label {
+    font-family: 'Press Start 2P', cursive;
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
   }
 
-  .card-cute {
-    @apply bg-surface rounded-cute p-4;
-    box-shadow: 0 4px 14px rgba(249, 115, 22, 0.15);
+  .pixel-title {
+    font-family: 'Press Start 2P', cursive;
+    line-height: 1.55;
+  }
+
+  .pixel-button {
+    @apply inline-flex items-center justify-center rounded-2xl border border-emerald-500 bg-emerald-500 px-4 py-2 text-sm font-bold text-white transition;
+    box-shadow: 0 6px 0 #1d5c34;
+  }
+
+  .pixel-button:hover {
+    transform: translateY(1px);
+    box-shadow: 0 4px 0 #1d5c34;
+  }
+
+  .pixel-button:disabled {
+    @apply cursor-not-allowed opacity-70;
+    box-shadow: 0 4px 0 #4c7158;
+  }
+
+  .pixel-button.subtle {
+    @apply border-amber-400 bg-amber-300 text-slate-900;
+    box-shadow: 0 6px 0 #b47f2d;
+  }
+
+  .pixel-link {
+    @apply text-sm font-semibold text-emerald-700 transition hover:text-emerald-900;
+  }
+
+  .stardew-panel {
+    @apply rounded-2xl border border-[#d8c299] bg-[#fff6e5] px-4 py-3 transition;
+    box-shadow: inset 0 0 0 1px rgba(255, 250, 239, 0.72);
+  }
+
+  .metric-card {
+    @apply rounded-3xl border border-emerald-200 bg-white/90 px-4 py-5;
+  }
+
+  .metric-card.compact {
+    @apply px-4 py-4;
+  }
+
+  .metric-value {
+    @apply block text-2xl font-extrabold text-slate-900;
+  }
+
+  .metric-label {
+    @apply mt-1 block text-sm text-slate-500;
+  }
+
+  .portrait-frame {
+    @apply overflow-hidden rounded-2xl border-[3px] border-[#c88b43] bg-[#fff3dd] shadow-[0_4px_0_#8a5a2b];
+  }
+
+  .world-map-shell {
+    @apply rounded-[32px] bg-[#f4d89a] p-3;
+    box-shadow: 0 8px 0 #ba884a;
+  }
+
+  .zone-plaque {
+    @apply rounded-[22px] border border-[#d9b978] bg-[rgba(255,247,232,0.86)] px-4 py-3 shadow-[0_10px_24px_rgba(88,57,25,0.18)] backdrop-blur-[2px];
+  }
+
+  .agent-marker {
+    @apply rounded-[18px] border-2 border-[#f8e2b8] bg-[rgba(255,249,240,0.84)] p-1 shadow-[0_6px_18px_rgba(24,52,32,0.18)];
+  }
+
+  .agent-tag {
+    @apply rounded-xl border border-[#d8c299] bg-[rgba(255,251,243,0.92)] px-2 py-1 text-[11px] font-bold text-slate-700 shadow-sm;
+  }
+
+  .event-card {
+    @apply rounded-2xl border border-emerald-200 bg-white/90 px-4 py-3;
+  }
+
+  .ranking-card {
+    @apply flex items-center justify-between rounded-2xl border border-[#d8c299] bg-[#fff6e5] px-4 py-3 transition hover:-translate-y-0.5;
+  }
+
+  .pixel-avatar {
+    @apply flex h-12 w-12 items-center justify-center rounded-xl border-2 border-white text-lg font-extrabold text-slate-900 shadow-[0_4px_0_rgba(36,75,52,0.22)];
+  }
+
+  .pixel-avatar.mini {
+    @apply h-10 w-10 text-sm;
+  }
+
+  .palette-sunset-amber {
+    background: linear-gradient(180deg, #ffd98a 0%, #f9a85c 100%);
+  }
+
+  .palette-berry-punch {
+    background: linear-gradient(180deg, #ffb2a0 0%, #ff7d7d 100%);
+  }
+
+  .palette-mint-gold {
+    background: linear-gradient(180deg, #bce6b2 0%, #e8d16d 100%);
   }
 }

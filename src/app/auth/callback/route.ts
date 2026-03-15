@@ -1,9 +1,14 @@
+import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-
-const CLIENT_ID = process.env.SECONDME_CLIENT_ID!
-const CLIENT_SECRET = process.env.SECONDME_CLIENT_SECRET!
-const REDIRECT_URI = `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`
+import {
+  exchangeAuthorizationCode,
+  fetchSecondMeProfile,
+  fetchSecondMeShades,
+  fetchSecondMeSoftMemory,
+} from '@/lib/secondme'
+import { setSessionCookie } from '@/lib/auth'
+import { syncRealAgentForUser } from '@/lib/mesociety/simulation'
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get('code')
@@ -14,81 +19,51 @@ export async function GET(request: NextRequest) {
   }
 
   if (!code) {
-    // 没有 code，重定向到登录
     return NextResponse.redirect(new URL('/api/auth?action=login', request.url))
   }
 
   try {
-    // 用授权码换取 access token
-    const tokenResponse = await fetch('https://api.second.me/oauth/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        grant_type: 'authorization_code',
-        code,
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
-        redirect_uri: REDIRECT_URI,
-      }),
-    })
+    const token = await exchangeAuthorizationCode(code)
+    const [profile, shades, memories] = await Promise.all([
+      fetchSecondMeProfile(token.accessToken),
+      fetchSecondMeShades(token.accessToken),
+      fetchSecondMeSoftMemory(token.accessToken),
+    ])
 
-    if (!tokenResponse.ok) {
-      throw new Error('Failed to get token')
-    }
-
-    const tokenData = await tokenResponse.json()
-    const { access_token, refresh_token, expires_in } = tokenData
-
-    // 获取用户信息
-    const userResponse = await fetch('https://api.second.me/v1/me', {
-      headers: {
-        Authorization: `Bearer ${access_token}`,
-      },
-    })
-
-    if (!userResponse.ok) {
-      throw new Error('Failed to get user info')
-    }
-
-    const userData = await userResponse.json()
-    const { id: secondMeId, name, avatar, email } = userData
-
-    // 保存或更新用户
     const user = await prisma.user.upsert({
-      where: { secondMeId },
-      create: {
-        secondMeId,
-        accessToken: access_token,
-        refreshToken: refresh_token,
-        tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
-        name,
-        avatar,
-        email,
-      },
+      where: { secondMeId: profile.userId },
       update: {
-        accessToken: access_token,
-        refreshToken: refresh_token,
-        tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
-        name,
-        avatar,
-        email,
+        accessToken: token.accessToken,
+        refreshToken: token.refreshToken,
+        tokenExpiresAt: new Date(Date.now() + token.expiresIn * 1000),
+        name: profile.name,
+        avatar: profile.avatar,
+        email: profile.email,
+        route: profile.route,
+      },
+      create: {
+        secondMeId: profile.userId,
+        accessToken: token.accessToken,
+        refreshToken: token.refreshToken,
+        tokenExpiresAt: new Date(Date.now() + token.expiresIn * 1000),
+        name: profile.name,
+        avatar: profile.avatar,
+        email: profile.email,
+        route: profile.route,
       },
     })
 
-    // 设置 session cookie
-    const response = NextResponse.redirect(new URL('/dashboard', request.url))
-    response.cookies.set('session', user.id, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: 60 * 60 * 24 * 7, // 1 week
-      path: '/',
+    await syncRealAgentForUser(user, {
+      profile,
+      shades,
+      memories,
     })
 
+    const response = NextResponse.redirect(new URL('/dashboard', request.url))
+    setSessionCookie(cookies(), user.id)
     return response
-  } catch (error) {
-    console.error('OAuth callback error:', error)
+  } catch (routeError) {
+    console.error('SecondMe OAuth callback failed:', routeError)
     return NextResponse.redirect(new URL('/?error=auth_failed', request.url))
   }
 }

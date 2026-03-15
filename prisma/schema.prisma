@@ -1,6 +1,3 @@
-// Prisma Schema for social_adapt_a2a
-// 数据库: MySQL
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,139 +7,323 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// 用户表 - 存储 SecondMe OAuth 信息
+enum AgentSource {
+  real
+  seed
+}
+
+enum AgentStatus {
+  active
+  degraded
+  idle
+}
+
+enum AgentBehaviorStyle {
+  rational
+  emotional
+  balanced
+}
+
+enum AgentStance {
+  support
+  oppose
+  neutral
+}
+
+enum ZoneType {
+  plaza
+  leaderboard
+  roundtable
+  discussion
+}
+
+enum RelationshipType {
+  follow
+  trust
+  cooperate
+  reject
+  alliance
+}
+
+enum SocialEventType {
+  move
+  inspect_leaderboard
+  encounter
+  discuss_topic
+  join_roundtable
+  roundtable_summary
+  follow
+  trust
+  cooperate
+  reject
+  alliance
+  zhihu_pending
+}
+
+enum RoundtableStatus {
+  match
+  invite
+  opening
+  responses
+  summary
+  relationship_update
+  completed
+}
+
+enum GraphNodeType {
+  agent
+  topic
+  roundtable
+  zhihu_placeholder_topic
+  zone
+  knowledge
+}
+
+enum GraphEdgeType {
+  follows
+  trusts
+  cooperates
+  rejects
+  participates_in
+  discusses
+  mentions
+}
+
+enum ZhihuIntegrationState {
+  pending_integration
+  connected
+  error
+}
+
 model User {
-  id            String   @id @default(cuid())
-  secondMeId    String   @unique // SecondMe 用户 ID
-  accessToken   String   // OAuth access token
-  refreshToken  String?  // OAuth refresh token
-  tokenExpiresAt DateTime? // Token 过期时间
-
-  // 用户资料
-  name          String?
-  avatar        String?
-  email         String?
-
-  // 社交成长记录
-  growthRecords  GrowthRecord[]
-  // 笔记
-  notes         Note[]
-  // 聊天会话
-  chatSessions  ChatSession[]
-
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default(cuid())
+  secondMeId     String   @unique
+  accessToken    String
+  refreshToken   String?
+  tokenExpiresAt DateTime?
+  name           String?
+  avatar         String?
+  email          String?
+  route          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  agent          Agent?
 
   @@map("users")
 }
 
-// 社交成长记录
-model GrowthRecord {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id])
+model Agent {
+  id                  String              @id @default(cuid())
+  userId              String?             @unique
+  user                User?               @relation(fields: [userId], references: [id])
+  source              AgentSource
+  status              AgentStatus         @default(active)
+  displayName         String
+  slug                String              @unique
+  bio                 String?             @db.Text
+  avatarUrl           String?
+  pixelRole           String
+  pixelPalette        String
+  style               AgentBehaviorStyle  @default(balanced)
+  stance              AgentStance         @default(neutral)
+  currentZone         ZoneType            @default(plaza)
+  influence           Int                 @default(0)
+  isPlayable          Boolean             @default(false)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  snapshots           AgentSnapshot[]
+  zonePresence        ZonePresence?
+  outgoingRelations   Relationship[]      @relation("RelationshipSource")
+  incomingRelations   Relationship[]      @relation("RelationshipTarget")
+  hostedRoundtables   Roundtable[]        @relation("RoundtableHost")
+  roundtableTurns     RoundtableTurn[]    @relation("RoundtableSpeaker")
+  roundtableMembers   RoundtableParticipant[]
+  scores              ScoreSnapshot[]
+  actorEvents         SocialEvent[]       @relation("EventActor")
+  targetEvents        SocialEvent[]       @relation("EventTarget")
 
-  // 记录类型: scenario_practice(场景练习), advice(建议), achievement(成就)
-  type        String
-
-  // 标题和内容
-  title       String
-  content     String?  @db.Text
-
-  // 场景类型 (用于场景模拟)
-  scenarioType String? // greeting, conversation, conflict, interview, etc.
-
-  // 分数/进度
-  score       Int?     // 0-100
-
-  createdAt   DateTime @default(now())
-
-  @@map("growth_records")
+  @@map("agents")
 }
 
-// 笔记
-model Note {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id])
+model AgentSnapshot {
+  id             String   @id @default(cuid())
+  agentId        String
+  agent          Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  sourceUserId   String?
+  identity       Json
+  interests      Json
+  memory         Json
+  behavior       Json
+  extractedTags  Json
+  createdAt      DateTime @default(now())
 
-  title       String
-  content     String   @db.Text
+  @@map("agent_snapshots")
+}
 
-  // 标签
-  tags        String?  // JSON array of tags
-
-  // 是否关联 SecondMe
-  secondMeRelated Boolean @default(false)
-
+model WorldState {
+  id          Int      @id
+  tickCount   Int      @default(0)
+  status      String   @default("running")
+  lastTickAt  DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@map("notes")
+  @@map("world_state")
 }
 
-// 聊天会话
-model ChatSession {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id])
+model ZonePresence {
+  id        String   @id @default(cuid())
+  agentId   String   @unique
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  zone      ZoneType
+  x         Int
+  y         Int
+  mood      String?
+  updatedAt DateTime @updatedAt
 
-  // 会话类型: practice(练习), advice(建议), community(社区)
-  sessionType String
-
-  // 场景描述
-  scenario    String?  @db.Text
-
-  // 会话标题
-  title       String?
-
-  // 消息
-  messages    Message[]
-
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@map("chat_sessions")
+  @@map("zone_presences")
 }
 
-// 消息
-model Message {
-  id          String   @id @default(cuid())
-  sessionId   String
-  session     ChatSession @relation(fields: [sessionId], references: [id])
+model SocialEvent {
+  id             String          @id @default(cuid())
+  type           SocialEventType
+  actorAgentId   String?
+  actorAgent     Agent?          @relation("EventActor", fields: [actorAgentId], references: [id], onDelete: SetNull)
+  targetAgentId  String?
+  targetAgent    Agent?          @relation("EventTarget", fields: [targetAgentId], references: [id], onDelete: SetNull)
+  zone           ZoneType?
+  topic          String?
+  summary        String?         @db.Text
+  roundtableId   String?
+  metadata       Json?
+  createdAt      DateTime        @default(now())
 
-  // 角色: user, assistant
-  role        String
-
-  // 消息内容
-  content     String   @db.Text
-
-  createdAt   DateTime @default(now())
-
-  @@map("messages")
+  @@index([createdAt])
+  @@index([type, createdAt])
+  @@map("social_events")
 }
 
-// 社区帖子
-model CommunityPost {
-  id          String   @id @default(cuid())
+model Relationship {
+  id             String            @id @default(cuid())
+  sourceAgentId  String
+  sourceAgent    Agent             @relation("RelationshipSource", fields: [sourceAgentId], references: [id], onDelete: Cascade)
+  targetAgentId  String
+  targetAgent    Agent             @relation("RelationshipTarget", fields: [targetAgentId], references: [id], onDelete: Cascade)
+  type           RelationshipType
+  strength       Float             @default(0)
+  rationale      String?           @db.Text
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 
-  // 作者 SecondMe ID
-  authorId    String
-  authorName  String
-  authorAvatar String?
+  @@unique([sourceAgentId, targetAgentId, type])
+  @@index([sourceAgentId, type])
+  @@index([targetAgentId, type])
+  @@map("relationships")
+}
 
-  // 帖子内容
-  title       String
-  content     String   @db.Text
+model Roundtable {
+  id             String                @id @default(cuid())
+  hostAgentId    String
+  hostAgent      Agent                 @relation("RoundtableHost", fields: [hostAgentId], references: [id], onDelete: Cascade)
+  status         RoundtableStatus      @default(match)
+  topic          String
+  summary        String?               @db.Text
+  knowledgeJson  Json?
+  startedAt      DateTime?
+  endedAt        DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  participants   RoundtableParticipant[]
+  turns          RoundtableTurn[]
 
-  // 标签
-  tags        String?  // JSON array
+  @@map("roundtables")
+}
 
-  // 点赞数
-  likes       Int      @default(0)
+model RoundtableParticipant {
+  id                 String      @id @default(cuid())
+  roundtableId       String
+  roundtable         Roundtable  @relation(fields: [roundtableId], references: [id], onDelete: Cascade)
+  agentId            String
+  agent              Agent       @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  role               String      @default("guest")
+  contributionScore  Float       @default(0)
+  joinedAt           DateTime    @default(now())
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  @@unique([roundtableId, agentId])
+  @@map("roundtable_participants")
+}
 
-  @@map("community_posts")
+model RoundtableTurn {
+  id             String           @id @default(cuid())
+  roundtableId   String
+  roundtable     Roundtable       @relation(fields: [roundtableId], references: [id], onDelete: Cascade)
+  turnIndex      Int
+  stage          RoundtableStatus
+  speakerAgentId String?
+  speakerAgent   Agent?           @relation("RoundtableSpeaker", fields: [speakerAgentId], references: [id], onDelete: SetNull)
+  content        String           @db.Text
+  metadata       Json?
+  createdAt      DateTime         @default(now())
+
+  @@unique([roundtableId, turnIndex])
+  @@map("roundtable_turns")
+}
+
+model ScoreSnapshot {
+  id                String   @id @default(cuid())
+  agentId           String
+  agent             Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  tickNumber        Int
+  totalScore        Float
+  connectionScore   Float
+  trustScore        Float
+  cooperationScore  Float
+  integrationScore  Float
+  rankOverall       Int?
+  createdAt         DateTime @default(now())
+
+  @@unique([agentId, tickNumber])
+  @@index([tickNumber, totalScore])
+  @@map("score_snapshots")
+}
+
+model GraphNode {
+  id        String        @id @default(cuid())
+  nodeKey   String        @unique
+  nodeType  GraphNodeType
+  refId     String?
+  label     String
+  metadata  Json?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  outgoing  GraphEdge[]   @relation("GraphEdgeSource")
+  incoming  GraphEdge[]   @relation("GraphEdgeTarget")
+
+  @@map("graph_nodes")
+}
+
+model GraphEdge {
+  id           String        @id @default(cuid())
+  edgeType     GraphEdgeType
+  sourceNodeId String
+  sourceNode   GraphNode     @relation("GraphEdgeSource", fields: [sourceNodeId], references: [id], onDelete: Cascade)
+  targetNodeId String
+  targetNode   GraphNode     @relation("GraphEdgeTarget", fields: [targetNodeId], references: [id], onDelete: Cascade)
+  weight       Float         @default(0)
+  metadata     Json?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([sourceNodeId, targetNodeId, edgeType])
+  @@map("graph_edges")
+}
+
+model ZhihuIntegrationStatus {
+  id          String                 @id
+  label       String
+  state       ZhihuIntegrationState  @default(pending_integration)
+  description String?                @db.Text
+  updatedAt   DateTime               @updatedAt
+
+  @@map("zhihu_integration_status")
 }

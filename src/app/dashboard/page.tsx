@@ -1,13 +1,14 @@
-import { getCurrentUser } from '@/lib/auth'
-import { redirect } from 'next/navigation'
+import Image from 'next/image'
 import Link from 'next/link'
-import {
-  MessageCircle,
-  TrendingUp,
-  BookOpen,
-  Users,
-  LogOut,
-} from 'lucide-react'
+import { redirect } from 'next/navigation'
+import { AgentPortrait } from '@/components/mesociety/agent-portrait'
+import { AutoTickToggle } from '@/components/mesociety/auto-tick-toggle'
+import { SiteFrame } from '@/components/mesociety/site-frame'
+import { TickButton } from '@/components/mesociety/tick-button'
+import { getCurrentUser } from '@/lib/auth'
+import { getLeaderboardView, getSessionView, getWorldStateView } from '@/lib/mesociety/simulation'
+
+export const dynamic = 'force-dynamic'
 
 export default async function DashboardPage() {
   const user = await getCurrentUser()
@@ -16,102 +17,124 @@ export default async function DashboardPage() {
     redirect('/api/auth?action=login')
   }
 
+  const [session, world, leaderboard] = await Promise.all([
+    getSessionView(user),
+    getWorldStateView(),
+    getLeaderboardView(),
+  ])
+  const currentEntry = leaderboard.find((entry) => entry.agentId === session?.agent?.id)
+
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="bg-white/80 backdrop-blur-sm border-b-2 border-primary-200 sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-          <h1 className="font-pixel text-primary-500 text-lg">社交适应力</h1>
-          <div className="flex items-center gap-4">
-            <span className="font-cute text-gray-600">
-              欢迎，{user.name || '用户'}
-            </span>
-            <a
-              href="/api/auth?action=logout"
-              className="flex items-center gap-1 text-gray-500 hover:text-primary-500"
-            >
-              <LogOut className="w-4 h-4" />
-              <span className="text-sm">退出</span>
-            </a>
+    <SiteFrame
+      eyebrow="我的控制台"
+      title={`欢迎回来，${session?.user.name || '新居民'}`}
+      description="这里是你的私有控制台。你可以查看自己的 Agent 状态，手动推进一轮社会仿真，并观察自己的位置、状态和排名。"
+      actions={
+        <div className="flex flex-wrap items-center gap-3">
+          <TickButton />
+          <AutoTickToggle />
+          <Link href="/api/auth?action=logout" className="pixel-button subtle">
+            退出登录
+          </Link>
+        </div>
+      }
+    >
+      <section className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr]">
+        <div className="space-y-6">
+          <div className="world-card overflow-hidden p-0">
+            <div className="relative h-36 border-b border-emerald-200/80">
+              <Image
+                src="/stardew/maps/town-indoors.png"
+                alt="Town indoors"
+                fill
+                className="object-cover"
+                unoptimized
+              />
+              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(20,41,24,0.05),rgba(255,248,239,0.78))]" />
+            </div>
+            <div className="p-5">
+            <p className="pixel-label text-emerald-700">我的 Agent</p>
+            {session?.agent ? (
+              <div className="mt-4 rounded-3xl border border-emerald-200 bg-white/90 p-4">
+                <div className="flex items-center gap-4">
+                  {currentEntry ? (
+                    <AgentPortrait src={currentEntry.portraitPath} alt={session.agent.name} size="lg" />
+                  ) : null}
+                  <div>
+                    <p className="text-lg font-semibold text-slate-900">{session.agent.name}</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      当前状态：{session.agent.status} · 当前区域：{session.agent.zone}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <Link href={`/agents/${session.agent.id}`} className="pixel-button subtle">
+                    查看完整画像
+                  </Link>
+                  <Link href="/world" className="pixel-button">
+                    进入世界观察
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <p className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+                你的用户资料已存在，但 Agent 尚未成功建档。重新登录一次即可重试 SecondMe 同步。
+              </p>
+            )}
+            </div>
+          </div>
+
+          <div className="world-card p-5">
+            <p className="pixel-label text-amber-700">世界状态</p>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <div className="metric-card compact">
+                <span className="metric-value">{world.tickCount}</span>
+                <span className="metric-label">运行 Tick</span>
+              </div>
+              <div className="metric-card compact">
+                <span className="metric-value">{world.agents.length}</span>
+                <span className="metric-label">Agent 总数</span>
+              </div>
+            </div>
           </div>
         </div>
-      </header>
 
-      {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-4 py-8">
-        <h2 className="font-pixel text-xl text-primary-600 mb-6">
-          选择训练模块
-        </h2>
+        <div className="world-card p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="pixel-label text-rose-700">我的位置</p>
+              <h2 className="pixel-title mt-2 text-lg">当前榜单与活跃区域</h2>
+            </div>
+            <Link href="/leaderboard" className="pixel-link">
+              全部大榜
+            </Link>
+          </div>
 
-        <div className="grid md:grid-cols-2 gap-6">
-          <ModuleCard
-            icon={<MessageCircle className="w-10 h-10 text-primary-400" />}
-            title="场景模拟"
-            description="在虚拟社交场景中练习对话，获得即时反馈"
-            href="/practice"
-            color="primary"
-          />
-          <ModuleCard
-            icon={<TrendingUp className="w-10 h-10 text-coral-400" />}
-            title="成长记录"
-            description="查看您的社交技能进步历程和成就"
-            href="/growth"
-            color="coral"
-          />
-          <ModuleCard
-            icon={<BookOpen className="w-10 h-10 text-secondary-400" />}
-            title="我的笔记"
-            description="记录社交心得，获取个性化建议"
-            href="/notes"
-            color="secondary"
-          />
-          <ModuleCard
-            icon={<Users className="w-10 h-10 text-accent-pink" />}
-            title="社区交流"
-            description="与其他用户分享经验、互相学习"
-            href="/community"
-            color="pink"
-          />
+          <div className="mt-5 space-y-3">
+            {leaderboard.slice(0, 8).map((entry) => (
+              <div
+                key={entry.agentId}
+                className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${
+                  entry.agentId === session?.agent?.id
+                    ? 'border-emerald-400 bg-emerald-50'
+                    : 'border-slate-200 bg-white/90'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <AgentPortrait src={entry.portraitPath} alt={entry.name} size="sm" />
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{entry.name}</p>
+                    <p className="text-xs text-slate-500">
+                      #{entry.rank} · {entry.currentZone}
+                    </p>
+                  </div>
+                </div>
+                <p className="text-sm font-bold text-slate-900">{entry.totalScore.toFixed(1)}</p>
+              </div>
+            ))}
+          </div>
         </div>
-      </main>
-    </div>
-  )
-}
-
-function ModuleCard({
-  icon,
-  title,
-  description,
-  href,
-  color,
-}: {
-  icon: React.ReactNode
-  title: string
-  description: string
-  href: string
-  color: 'primary' | 'coral' | 'secondary' | 'pink'
-}) {
-  const colorClasses = {
-    primary: 'border-primary-200 hover:border-primary-400 hover:bg-primary-50',
-    coral: 'border-coral-200 hover:border-coral-400 hover:bg-coral-50',
-    secondary: 'border-secondary-200 hover:border-secondary-400 hover:bg-secondary-50',
-    pink: 'border-accent-pink hover:border-accent-coral hover:bg-pink-50',
-  }
-
-  return (
-    <Link
-      href={href}
-      className={`card-pixel block hover:scale-105 transition-all ${colorClasses[color]}`}
-    >
-      <div className="flex items-start gap-4">
-        <div className="p-2 bg-white rounded-pixel">{icon}</div>
-        <div>
-          <h3 className="font-cute font-bold text-lg text-gray-800 mb-1">
-            {title}
-          </h3>
-          <p className="text-sm text-gray-600">{description}</p>
-        </div>
-      </div>
-    </Link>
+      </section>
+    </SiteFrame>
   )
 }
