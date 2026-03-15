@@ -6,8 +6,13 @@ import type {
   GraphNodeType,
   Prisma,
   RelationshipType,
+  Roundtable,
+  RoundtableParticipant,
   RoundtableStatus,
+  RoundtableTurn,
+  SocialEvent,
   User,
+  ZonePresence,
   ZoneType,
 } from '@prisma/client'
 import { env } from '@/lib/env'
@@ -32,6 +37,7 @@ import { seedAgentDefinitions } from '@/lib/mesociety/seeds'
 import { calculateSScore } from '@/lib/mesociety/score'
 import type {
   AgentDetailView,
+  HomeWorldView,
   AgentWithSnapshot,
   GraphView,
   LeaderboardEntry,
@@ -93,6 +99,51 @@ type ViewReadOptions = {
 type ViewCacheEntry = {
   expiresAt: number
   value: unknown
+}
+
+type WorldAgentRecord = Pick<
+  Agent,
+  | 'id'
+  | 'displayName'
+  | 'source'
+  | 'slug'
+  | 'status'
+  | 'currentZone'
+  | 'influence'
+  | 'pixelRole'
+  | 'pixelPalette'
+  | 'stance'
+  | 'style'
+> & {
+  zonePresence: Pick<ZonePresence, 'zone' | 'x' | 'y'> | null
+}
+
+type RoundtableSummaryRecord = Pick<
+  Roundtable,
+  'id' | 'topic' | 'status' | 'summary' | 'knowledgeJson' | 'hostAgentId'
+> & {
+  hostAgent: Pick<Agent, 'displayName' | 'slug' | 'pixelRole' | 'pixelPalette'>
+  participants: Array<
+    Pick<RoundtableParticipant, 'agentId' | 'role' | 'contributionScore'> & {
+      agent: Pick<
+        Agent,
+        'displayName' | 'source' | 'slug' | 'pixelRole' | 'pixelPalette' | 'status'
+      >
+    }
+  >
+  turns: Array<
+    Pick<RoundtableTurn, 'id' | 'stage' | 'speakerAgentId' | 'metadata' | 'content' | 'createdAt'> & {
+      speakerAgent: Pick<Agent, 'displayName'> | null
+    }
+  >
+}
+
+type WorldEventRecord = Pick<
+  SocialEvent,
+  'id' | 'type' | 'topic' | 'summary' | 'createdAt' | 'actorAgentId' | 'targetAgentId' | 'zone'
+> & {
+  actorAgent: Pick<Agent, 'displayName'> | null
+  targetAgent: Pick<Agent, 'displayName'> | null
 }
 
 declare global {
@@ -212,7 +263,7 @@ function getSnapshotMemories(agent: AgentWithSnapshot) {
   return toStringArray(toRecord(snapshot.memory).highlights)
 }
 
-function buildWorldAgentView(agent: AgentWithSnapshot): WorldAgentView {
+function buildWorldAgentView(agent: WorldAgentRecord): WorldAgentView {
   return {
     id: agent.id,
     name: agent.displayName,
@@ -704,6 +755,46 @@ async function listAgents() {
   })
 }
 
+async function listWorldAgents() {
+  return prisma.agent.findMany({
+    select: {
+      id: true,
+      displayName: true,
+      source: true,
+      slug: true,
+      status: true,
+      currentZone: true,
+      influence: true,
+      pixelRole: true,
+      pixelPalette: true,
+      stance: true,
+      style: true,
+      zonePresence: {
+        select: {
+          zone: true,
+          x: true,
+          y: true,
+        },
+      },
+    },
+    orderBy: { createdAt: 'asc' },
+  })
+}
+
+async function listHomeAgents() {
+  return prisma.agent.findMany({
+    select: {
+      id: true,
+      displayName: true,
+      source: true,
+      status: true,
+      pixelRole: true,
+      pixelPalette: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  })
+}
+
 async function getActiveRoundtable() {
   return prisma.roundtable.findFirst({
     where: {
@@ -726,6 +817,139 @@ async function getActiveRoundtable() {
       },
     },
     orderBy: { createdAt: 'desc' },
+  })
+}
+
+async function getActiveRoundtableForView() {
+  return prisma.roundtable.findFirst({
+    where: {
+      status: {
+        not: 'completed',
+      },
+    },
+    select: {
+      id: true,
+      topic: true,
+      status: true,
+      summary: true,
+      knowledgeJson: true,
+      hostAgentId: true,
+      hostAgent: {
+        select: {
+          displayName: true,
+          slug: true,
+          pixelRole: true,
+          pixelPalette: true,
+        },
+      },
+      participants: {
+        select: {
+          agentId: true,
+          role: true,
+          contributionScore: true,
+          agent: {
+            select: {
+              displayName: true,
+              source: true,
+              slug: true,
+              pixelRole: true,
+              pixelPalette: true,
+              status: true,
+            },
+          },
+        },
+      },
+      turns: {
+        select: {
+          id: true,
+          stage: true,
+          speakerAgentId: true,
+          metadata: true,
+          content: true,
+          createdAt: true,
+          speakerAgent: {
+            select: {
+              displayName: true,
+            },
+          },
+        },
+        orderBy: { turnIndex: 'asc' },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  })
+}
+
+async function getActiveRoundtableForHome() {
+  return prisma.roundtable.findFirst({
+    where: {
+      status: {
+        not: 'completed',
+      },
+    },
+    select: {
+      id: true,
+      hostAgentId: true,
+      topic: true,
+      turns: {
+        select: {
+          id: true,
+          content: true,
+          speakerAgent: {
+            select: {
+              displayName: true,
+            },
+          },
+        },
+        orderBy: { turnIndex: 'desc' },
+        take: 2,
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  })
+}
+
+async function listRecentWorldEvents() {
+  return prisma.socialEvent.findMany({
+    select: {
+      id: true,
+      type: true,
+      topic: true,
+      summary: true,
+      createdAt: true,
+      actorAgentId: true,
+      targetAgentId: true,
+      zone: true,
+      actorAgent: {
+        select: {
+          displayName: true,
+        },
+      },
+      targetAgent: {
+        select: {
+          displayName: true,
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 18,
+  })
+}
+
+async function listHomeEvents() {
+  return prisma.socialEvent.findMany({
+    select: {
+      id: true,
+      type: true,
+      summary: true,
+      actorAgent: {
+        select: {
+          displayName: true,
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 3,
   })
 }
 
@@ -1647,8 +1871,24 @@ async function getLatestScoreSnapshots() {
     where: {
       tickNumber: latestSnapshot.tickNumber,
     },
-    include: {
-      agent: true,
+    select: {
+      agentId: true,
+      totalScore: true,
+      connectionScore: true,
+      trustScore: true,
+      cooperationScore: true,
+      integrationScore: true,
+      agent: {
+        select: {
+          displayName: true,
+          source: true,
+          slug: true,
+          currentZone: true,
+          pixelRole: true,
+          pixelPalette: true,
+          status: true,
+        },
+      },
     },
     orderBy: {
       totalScore: 'desc',
@@ -1677,8 +1917,17 @@ async function buildLeaderboard() {
   })) satisfies LeaderboardEntry[]
 }
 
+async function buildHomeLeaderboard() {
+  const leaderboard = await buildLeaderboard()
+  return leaderboard.slice(0, 5).map((entry) => ({
+    agentId: entry.agentId,
+    name: entry.name,
+    totalScore: entry.totalScore,
+  }))
+}
+
 function buildRoundtableSummary(
-  roundtable: NonNullable<Awaited<ReturnType<typeof getActiveRoundtable>>>
+  roundtable: RoundtableSummaryRecord
 ): RoundtableSummary {
   const knowledge = toRecord(roundtable.knowledgeJson)
   const knowledgeParticipants = toStringArray(knowledge.participants)
@@ -1741,24 +1990,21 @@ export async function getWorldStateView(options: ViewReadOptions = {}) {
       await ensureWorldInitialized()
 
       const [worldState, agents, leaderboard, events, activeRoundtable, zhihu] = await Promise.all([
-        ensureWorldState(),
-        listAgents(),
-        buildLeaderboard(),
-        prisma.socialEvent.findMany({
-          include: {
-            actorAgent: true,
-            targetAgent: true,
-          },
-          orderBy: { createdAt: 'desc' },
-          take: 18,
+        prisma.worldState.findUnique({
+          where: { id: WORLD_STATE_ID },
         }),
-        getActiveRoundtable(),
+        listWorldAgents(),
+        buildLeaderboard(),
+        listRecentWorldEvents(),
+        getActiveRoundtableForView(),
         listZhihuCapabilities(),
       ])
 
+      const currentWorldState = worldState || (await ensureWorldState())
+
       return {
-        tickCount: worldState.tickCount,
-        lastTickAt: worldState.lastTickAt?.toISOString() || null,
+        tickCount: currentWorldState.tickCount,
+        lastTickAt: currentWorldState.lastTickAt?.toISOString() || null,
         intervals: {
           tickMs: env.simulation.tickIntervalMs,
         },
@@ -1806,6 +2052,71 @@ export async function getLeaderboardView(options: ViewReadOptions = {}) {
     async () => {
       await ensureWorldInitialized()
       return buildLeaderboard()
+    },
+    {
+      forceFresh: options.forceFresh,
+    }
+  )
+}
+
+export async function getHomeWorldView(options: ViewReadOptions = {}) {
+  if (options.allowTick) {
+    await maybeRunSimulationTick()
+  }
+
+  return readCachedView(
+    'home',
+    async () => {
+      await ensureWorldInitialized()
+
+      const [worldState, agents, leaderboard, events, activeRoundtable] = await Promise.all([
+        prisma.worldState.findUnique({
+          where: { id: WORLD_STATE_ID },
+          select: {
+            tickCount: true,
+          },
+        }),
+        listHomeAgents(),
+        buildHomeLeaderboard(),
+        listHomeEvents(),
+        getActiveRoundtableForHome(),
+      ])
+
+      const currentWorldState = worldState || (await ensureWorldState())
+
+      return {
+        tickCount: currentWorldState.tickCount,
+        agents: agents.map((agent) => ({
+          id: agent.id,
+          name: agent.displayName,
+          source: agent.source,
+          status: agent.status,
+          pixelRole: agent.pixelRole,
+          pixelPalette: agent.pixelPalette,
+        })),
+        leaderboard,
+        activeRoundtable: activeRoundtable
+          ? {
+              id: activeRoundtable.id,
+              hostId: activeRoundtable.hostAgentId,
+              topic: activeRoundtable.topic,
+              turns: activeRoundtable.turns
+                .slice()
+                .reverse()
+                .map((turn) => ({
+                  id: turn.id,
+                  speakerName: turn.speakerAgent?.displayName || null,
+                  content: turn.content,
+                })),
+            }
+          : null,
+        recentEvents: events.map((event) => ({
+          id: event.id,
+          type: event.type,
+          actorName: event.actorAgent?.displayName,
+          summary: event.summary,
+        })),
+      } satisfies HomeWorldView
     },
     {
       forceFresh: options.forceFresh,
