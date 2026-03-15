@@ -1,4 +1,3 @@
-import { env } from '@/lib/env'
 import { prisma } from '@/lib/prisma'
 import { ensureAutoSimulationRunner } from '@/lib/mesociety/runner'
 import { getWorldStateView } from '@/lib/mesociety/simulation'

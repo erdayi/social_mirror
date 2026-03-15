@@ -364,12 +364,12 @@ function parseZhihuMeta(metadata: unknown) {
   }
 }
 
-function getLatestSnapshot(agent: Pick<AgentWithSnapshot, 'snapshots'> | Pick<WorldAgentRecord, 'snapshots'>) {
+function getLatestSnapshot(agent: AgentWithSnapshot) {
   return agent.snapshots[0] || null
 }
 
-function getSnapshotTags(agent: AgentWithSnapshot) {
-  const snapshot = getLatestSnapshot(agent)
+function getSnapshotTags(agent: Pick<AgentWithSnapshot, 'snapshots'> | Pick<WorldAgentRecord, 'snapshots'>) {
+  const snapshot = agent.snapshots[0] || null
   if (!snapshot) {
     return []
   }
@@ -378,7 +378,7 @@ function getSnapshotTags(agent: AgentWithSnapshot) {
 }
 
 function getSnapshotMemories(agent: AgentWithSnapshot) {
-  const snapshot = getLatestSnapshot(agent)
+  const snapshot = agent.snapshots[0] || null
   if (!snapshot) {
     return []
   }
@@ -389,7 +389,7 @@ function getSnapshotMemories(agent: AgentWithSnapshot) {
 function getSocialProfileFromAgent(
   agent: (AgentWithSnapshot | WorldAgentRecord) & Pick<Agent, 'style' | 'stance'>
 ): SocialProfile {
-  const snapshot = getLatestSnapshot(agent)
+  const snapshot = agent.snapshots[0] || null
   const behavior = toRecord(snapshot?.behavior)
   const social = toRecord(behavior.social)
 
@@ -2283,7 +2283,7 @@ async function getActiveRoundtableForView() {
   })
 }
 
-async function listRecentWorldEvents() {
+async function listRecentWorldEvents(): Promise<WorldEventRecord[]> {
   return prisma.socialEvent.findMany({
     select: {
       id: true,
@@ -3642,7 +3642,7 @@ async function ensureGraphEdge(input: {
 }
 
 async function syncGraph() {
-  const [agents, relationships, roundtables, economyEvents] = await Promise.all([
+  const [agents, relationships, roundtables, economyEvents, upgradePlans] = await Promise.all([
     listAgents(),
     prisma.relationship.findMany(),
     prisma.roundtable.findMany({
@@ -3653,6 +3653,10 @@ async function syncGraph() {
     prisma.socialEvent.findMany({
       orderBy: { createdAt: 'desc' },
       take: 60,
+    }),
+    prisma.districtUpgradePlan.findMany({
+      orderBy: { updatedAt: 'desc' },
+      take: 18,
     }),
   ])
 
@@ -3918,6 +3922,68 @@ async function syncGraph() {
           metadata: {
             category: 'resource_exchange',
           },
+        })
+      }
+    }
+  }
+
+  for (const plan of upgradePlans) {
+    const projectNode = await ensureGraphNode(`knowledge:project:${plan.id}`, {
+      type: 'knowledge',
+      label: `工程:${plan.title}`,
+      refId: plan.id,
+      metadata: {
+        districtLabel: plan.districtLabel,
+        stage: plan.stage,
+        progressPercent: plan.progressPercent,
+        requiredResourceLabel: plan.requiredResourceLabel,
+      },
+    })
+    nodeMap.set(projectNode.nodeKey, projectNode.id)
+
+    const districtNode = await ensureGraphNode(`topic:街区资源:${plan.districtLabel}`, {
+      type: 'topic',
+      label: `街区:${plan.districtLabel}`,
+      metadata: {
+        project: plan.title,
+      },
+    })
+    nodeMap.set(districtNode.nodeKey, districtNode.id)
+
+    await ensureGraphEdge({
+      type: 'mentions',
+      sourceNodeId: districtNode.id,
+      targetNodeId: projectNode.id,
+      weight: Math.max(1, plan.progressPercent / 25),
+      metadata: {
+        stage: plan.stage,
+      },
+    })
+
+    const resourceNode = await ensureGraphNode(`topic:资源:${plan.requiredResourceKey}`, {
+      type: 'topic',
+      label: `资源:${plan.requiredResourceLabel}`,
+      metadata: {
+        category: 'project_requirement',
+      },
+    })
+    nodeMap.set(resourceNode.nodeKey, resourceNode.id)
+
+    await ensureGraphEdge({
+      type: 'mentions',
+      sourceNodeId: projectNode.id,
+      targetNodeId: resourceNode.id,
+      weight: Math.max(1, plan.requiredUnits / 10),
+    })
+
+    if (plan.sponsorAgentId) {
+      const sponsorNodeId = nodeMap.get(`agent:${plan.sponsorAgentId}`)
+      if (sponsorNodeId) {
+        await ensureGraphEdge({
+          type: 'mentions',
+          sourceNodeId: sponsorNodeId,
+          targetNodeId: projectNode.id,
+          weight: Math.max(1, plan.progressPercent / 20),
         })
       }
     }
