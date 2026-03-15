@@ -9,11 +9,11 @@ export const dynamic = 'force-dynamic'
 
 const stageMeta: Record<string, { label: string; classes: string }> = {
   match: { label: '匹配', classes: 'bg-[rgba(31,44,78,0.84)] text-[#72e7ff] border-[rgba(124,218,255,0.24)]' },
-  invite: { label: '邀请', classes: 'bg-[rgba(220,233,255,0.92)] text-[#435c86] border-[rgba(92,112,176,0.2)]' },
-  opening: { label: '开场', classes: 'bg-[rgba(255,232,193,0.94)] text-[#8b5728] border-[rgba(156,109,52,0.2)]' },
-  responses: { label: '回应', classes: 'bg-[rgba(245,224,255,0.92)] text-[#6b4e95] border-[rgba(125,100,174,0.2)]' },
-  summary: { label: '总结', classes: 'bg-[rgba(232,227,255,0.92)] text-[#5c54a4] border-[rgba(98,91,170,0.2)]' },
-  relationship_update: { label: '关系更新', classes: 'bg-[rgba(255,225,229,0.92)] text-[#995267] border-[rgba(167,98,122,0.2)]' },
+  invite: { label: '邀请', classes: 'bg-[rgba(49,40,79,0.92)] text-[#bfd4ff] border-[rgba(92,112,176,0.28)]' },
+  opening: { label: '开场', classes: 'bg-[rgba(70,46,30,0.94)] text-[#ffd68f] border-[rgba(186,137,79,0.24)]' },
+  responses: { label: '回应', classes: 'bg-[rgba(68,43,92,0.92)] text-[#d6b6ff] border-[rgba(125,100,174,0.24)]' },
+  summary: { label: '总结', classes: 'bg-[rgba(55,47,92,0.92)] text-[#c6bfff] border-[rgba(98,91,170,0.24)]' },
+  relationship_update: { label: '关系更新', classes: 'bg-[rgba(84,37,57,0.92)] text-[#ffb8cb] border-[rgba(167,98,122,0.24)]' },
   completed: { label: '已完成', classes: 'bg-[rgba(41,30,60,0.94)] text-[rgba(249,233,199,0.72)] border-[rgba(126,113,186,0.24)]' },
 }
 
@@ -28,9 +28,9 @@ const stageOrder = [
 ]
 
 const originMeta: Record<string, { label: string; classes: string }> = {
-  secondme: { label: 'SecondMe', classes: 'bg-[rgba(220,233,255,0.92)] text-[#435c86] border-[rgba(92,112,176,0.2)]' },
-  seed_rules: { label: 'Seed', classes: 'bg-[rgba(255,232,193,0.94)] text-[#8b5728] border-[rgba(156,109,52,0.2)]' },
-  fallback: { label: 'Fallback', classes: 'bg-[rgba(255,225,229,0.92)] text-[#995267] border-[rgba(167,98,122,0.2)]' },
+  secondme: { label: 'SecondMe', classes: 'bg-[rgba(49,40,79,0.92)] text-[#bfd4ff] border-[rgba(92,112,176,0.28)]' },
+  seed_rules: { label: 'Seed', classes: 'bg-[rgba(70,46,30,0.94)] text-[#ffd68f] border-[rgba(156,109,52,0.24)]' },
+  fallback: { label: 'Fallback', classes: 'bg-[rgba(84,37,57,0.92)] text-[#ffb8cb] border-[rgba(167,98,122,0.24)]' },
   system: { label: '系统', classes: 'bg-[rgba(31,44,78,0.84)] text-[#72e7ff] border-[rgba(124,218,255,0.24)]' },
 }
 
@@ -170,7 +170,7 @@ export default async function RoundtableDetailPage({
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="pixel-label text-[#72e7ff]">圆桌场景</p>
-              <h2 className="pixel-title mt-2 text-xl text-[#372514]">谁已入座，谁在发言</h2>
+              <h2 className="pixel-title mt-2 text-xl text-[#ffe9ae]">谁已入座，谁在发言</h2>
             </div>
             <Link href="/roundtables" className="pixel-link">
               返回圆桌大厅
@@ -203,6 +203,20 @@ export default async function RoundtableDetailPage({
                 <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.84)]">
                   {turn.content}
                 </p>
+                {turn.audioUrl ? (
+                  <div className="mt-3 pixel-audio-shell">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="pixel-inline-badge">语音回放</span>
+                      <span className="text-xs font-semibold text-[rgba(249,233,199,0.68)]">
+                        {turn.speakerName || '系统'}
+                      </span>
+                    </div>
+                    <audio controls preload="none" className="pixel-audio-player mt-3">
+                      <source src={turn.audioUrl} />
+                      <span className="text-xs font-semibold text-[rgba(249,233,199,0.52)]">不支持音频播放</span>
+                    </audio>
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>

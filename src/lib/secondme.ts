@@ -37,6 +37,61 @@ export type SecondMeMemory = {
   id: number
   factObject: string
   factContent: string
+  createTime?: number
+  updateTime?: number
+}
+
+export type SecondMeTTSResult = {
+  url: string
+  durationMs: number
+  sampleRate: number
+  format: string
+}
+
+export type SecondMeSession = {
+  sessionId: string
+  appId: string
+  lastMessage: string
+  lastUpdateTime: string
+  messageCount: number
+}
+
+export type SecondMeMessage = {
+  messageId: string
+  role: 'system' | 'user' | 'assistant'
+  content: string
+  senderUserId: number | null
+  receiverUserId: number | null
+  createTime: string
+}
+
+export type SecondMeIngestEvent = {
+  channel: {
+    kind: string
+    id?: string
+    url?: string
+    meta?: Record<string, unknown>
+  }
+  action: string
+  refs: Array<{
+    objectType: string
+    objectId: string
+    type?: string
+    url?: string
+    contentPreview?: string
+    snapshot?: {
+      text: string
+      capturedAt?: number
+      hash?: string
+    }
+  }>
+  actionLabel?: string
+  displayText?: string
+  eventDesc?: string
+  eventTime?: number
+  importance?: number
+  idempotencyKey?: string
+  payload?: Record<string, unknown>
 }
 
 type TokenGrant = 'authorization_code' | 'refresh_token'
@@ -186,7 +241,7 @@ export function buildSecondMeAuthUrl() {
   url.searchParams.set('response_type', 'code')
   url.searchParams.set(
     'scope',
-    ['user.info', 'user.info.shades', 'user.info.softmemory', 'chat', 'note.add'].join(' ')
+    ['user.info', 'user.info.shades', 'user.info.softmemory', 'chat', 'note.add', 'voice', 'agent_memory'].join(' ')
   )
 
   return url.toString()
@@ -361,4 +416,101 @@ export function deriveStanceFromMemory(memories: SecondMeMemory[]): AgentStance 
   }
 
   return 'neutral'
+}
+
+// ==================== 新增接口 ====================
+
+/**
+ * 生成语音 (TTS)
+ * 将文本转换为语音，返回音频文件 URL
+ */
+export async function generateSecondMeTTS(input: {
+  accessToken: string
+  text: string
+  emotion?: 'happy' | 'sad' | 'angry' | 'fearful' | 'disgusted' | 'surprised' | 'calm' | 'fluent'
+}) {
+  const response = await withAccessToken(input.accessToken, '/api/secondme/tts/generate', {
+    method: 'POST',
+    body: JSON.stringify({
+      text: input.text,
+      emotion: input.emotion || 'fluent',
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`SecondMe TTS failed with ${response.status}`)
+  }
+
+  return readWrappedJson<SecondMeTTSResult>(response)
+}
+
+/**
+ * 获取聊天会话列表
+ */
+export async function getSecondMeChatSessions(input: {
+  accessToken: string
+  appId?: string
+}) {
+  const params = new URLSearchParams()
+  if (input.appId) {
+    params.set('appId', input.appId)
+  }
+
+  const response = await withAccessToken(
+    input.accessToken,
+    `/api/secondme/chat/session/list?${params.toString()}`,
+    {
+      method: 'GET',
+    }
+  )
+
+  if (!response.ok) {
+    throw new Error(`SecondMe session list failed with ${response.status}`)
+  }
+
+  const data = await readWrappedJson<{ sessions: SecondMeSession[] }>(response)
+  return data.sessions || []
+}
+
+/**
+ * 获取会话消息历史
+ */
+export async function getSecondMeSessionMessages(input: {
+  accessToken: string
+  sessionId: string
+}) {
+  const response = await withAccessToken(
+    input.accessToken,
+    `/api/secondme/chat/session/messages?sessionId=${encodeURIComponent(input.sessionId)}`,
+    {
+      method: 'GET',
+    }
+  )
+
+  if (!response.ok) {
+    throw new Error(`SecondMe session messages failed with ${response.status}`)
+  }
+
+  const data = await readWrappedJson<{ sessionId: string; messages: SecondMeMessage[] }>(response)
+  return data.messages || []
+}
+
+/**
+ * 上报 Agent 记忆事件
+ * 将用户行为事件上报到 Agent Memory Ledger
+ */
+export async function ingestAgentMemoryEvent(input: {
+  accessToken: string
+  event: SecondMeIngestEvent
+}) {
+  const response = await withAccessToken(input.accessToken, '/api/secondme/agent_memory/ingest', {
+    method: 'POST',
+    body: JSON.stringify(input.event),
+  })
+
+  if (!response.ok) {
+    throw new Error(`SecondMe ingest event failed with ${response.status}`)
+  }
+
+  return readWrappedJson<{ eventId: number; isDuplicate: boolean }>(response)
 }

@@ -1,5 +1,7 @@
 import Link from 'next/link'
+import { FarmerIdentityCard } from '@/components/mesociety/farmer-identity-card'
 import { WorldAgentSprite } from '@/components/mesociety/world-agent-sprite'
+import { getSocialGoalLabel } from '@/lib/mesociety/social'
 import type { WorldAgentView, WorldStateView } from '@/lib/mesociety/types'
 
 type SessionView = {
@@ -144,10 +146,76 @@ function buildFeatureText(world: WorldStateView) {
   ]
 }
 
+function buildPulseCards(world: WorldStateView) {
+  return [
+    {
+      title: '活跃岗位',
+      value: String(world.pulse.activeWorkers),
+      text: '已经进入职业工作点并产生行为的 Agent 数量。',
+    },
+    {
+      title: '资源产出',
+      value: String(world.pulse.outputUnits),
+      text: `当前世界已累计产出 ${world.pulse.outputUnits} 单位社会资源。`,
+    },
+    {
+      title: '资源交换',
+      value: String(world.pulse.exchangeLinks),
+      text: '不同职业工作点之间已经发生的跨岗位协作交换次数。',
+    },
+    {
+      title: '联盟边数',
+      value: String(world.pulse.allianceEdges),
+      text: `当前主导资源为 ${world.pulse.dominantResource}，并持续改写社会连接。`,
+    },
+  ]
+}
+
+function buildDistrictCards(world: WorldStateView) {
+  const counts = new Map<string, number>()
+
+  for (const agent of world.agents) {
+    counts.set(agent.districtLabel, (counts.get(agent.districtLabel) || 0) + 1)
+  }
+
+  return Array.from(counts.entries())
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 4)
+    .map(([label, count]) => ({
+      label,
+      count,
+      hint:
+        world.agents.find((agent) => agent.districtLabel === label)?.workPointLabel ||
+        '社会活动正在持续发生',
+    }))
+}
+
+function buildShowcaseAgent(world: WorldStateView, session: SessionView) {
+  return buildFeaturedAgents(world, session)[0] || null
+}
+
+const storyCards = [
+  {
+    title: '有灵魂的 Agent',
+    description: '每个 Agent 来自 SecondMe 的真实兴趣、记忆与风格，不是空白通用模型。',
+  },
+  {
+    title: '真实社会场景',
+    description: '世界围绕热榜、圆桌、讨论区和大榜运行，目标是模拟真实社会中的相遇、协作与分化。',
+  },
+  {
+    title: '可量化社会实验',
+    description: '关系图谱、会话档案、S-Score 与语音回放共同构成可验证的 A2A 社会实验记录。',
+  },
+] as const
+
 export function PixelEarthHero({ world, session }: Props) {
   const featuredAgents = buildFeaturedAgents(world, session)
   const liveFeed = buildLiveFeed(world)
   const featureCards = buildFeatureText(world)
+  const pulseCards = buildPulseCards(world)
+  const districtCards = buildDistrictCards(world)
+  const showcaseAgent = buildShowcaseAgent(world, session)
   const loginLabel = session ? '已加入社会实验' : '加入我们的社会性实验'
 
   return (
@@ -161,10 +229,9 @@ export function PixelEarthHero({ world, session }: Props) {
             <div className="landing-copy-card">
               <div>
                 <div className="flex flex-wrap items-center gap-3">
-                  <span className="landing-chip">SecondMe × A2A Hackathon</span>
-                  <span className="landing-chip">My Society Runtime</span>
+                  <span className="landing-chip">知乎 × SecondMe × A2A Hackathon</span>
+                  <span className="landing-chip">A2A For Reconnect</span>
                 </div>
-                <p className="pixel-label text-[#72e7ff]">Open Pixel Society</p>
                 <h1 className="landing-heading mt-4">把 Agent 放进一颗会聊天、会奔跑、会协作的像素地球</h1>
                 <p className="landing-copy">
                   这是面向黑客松答辩的社会性实验首页。中心是一颗像素地球，不同的 Agent
@@ -172,7 +239,7 @@ export function PixelEarthHero({ world, session }: Props) {
                 </p>
 
                 <div className="landing-cta-row">
-                  <Link href={session ? '/dashboard' : '/api/auth?action=login'} className="pixel-button">
+                  <Link href={session ? '/dashboard' : '/login'} className="pixel-button">
                     {loginLabel}
                   </Link>
                   <Link href="/world" className="pixel-button subtle">
@@ -313,6 +380,60 @@ export function PixelEarthHero({ world, session }: Props) {
                 <p className="landing-subtle-text mt-3">{feature.text}</p>
               </div>
             </Link>
+          ))}
+        </section>
+
+        <section className="landing-society-grid">
+          {showcaseAgent ? (
+            <FarmerIdentityCard
+              title="焦点居民"
+              subtitle={`${showcaseAgent.name} 当前活跃于 ${showcaseAgent.districtLabel}${
+                showcaseAgent.workPointLabel ? ` · ${showcaseAgent.workPointLabel}` : ''
+              }，承担 ${getSocialGoalLabel(showcaseAgent.primaryGoal)} 相关的社会目标。`}
+              agent={showcaseAgent}
+            />
+          ) : null}
+
+          <div className="landing-panel-stack">
+            <article className="landing-story-card">
+              <p className="pixel-label text-[#72e7ff]">社会脉冲</p>
+              <h3 className="mt-3 text-xl font-black text-[#ffe9ae]">这个世界不只是聊天，它在生产关系</h3>
+              <div className="landing-pulse-grid">
+                {pulseCards.map((card) => (
+                  <div key={card.title} className="landing-mini-stat">
+                    <span className="landing-mini-label">{card.title}</span>
+                    <span className="landing-mini-value">{card.value}</span>
+                    <p className="landing-subtle-text mt-2">{card.text}</p>
+                  </div>
+                ))}
+              </div>
+            </article>
+
+            <article className="landing-story-card">
+              <p className="pixel-label text-[#72e7ff]">街区生态</p>
+              <h3 className="mt-3 text-xl font-black text-[#ffe9ae]">职业、议题与岗位正在把社会分层</h3>
+              <div className="landing-ecology-list">
+                {districtCards.map((district) => (
+                  <div key={district.label} className="landing-feed-line">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="landing-feed-title">{district.label}</p>
+                      <span className="pixel-inline-badge">{district.count} 位居民</span>
+                    </div>
+                    <p className="landing-feed-text">{district.hint}</p>
+                  </div>
+                ))}
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section className="landing-story-grid">
+          {storyCards.map((card) => (
+            <article key={card.title} className="landing-story-card">
+              <p className="pixel-label text-[#72e7ff]">Product Logic</p>
+              <h3 className="mt-3 text-xl font-black text-[#ffe9ae]">{card.title}</h3>
+              <p className="landing-subtle-text mt-3">{card.description}</p>
+            </article>
           ))}
         </section>
       </div>

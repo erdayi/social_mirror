@@ -1,7 +1,8 @@
 import type { Metadata } from 'next'
 import './globals.css'
-import { GlobalNav } from '@/components/mesociety/global-nav'
+import { RootShell } from '@/components/mesociety/root-shell'
 import { getCurrentUser } from '@/lib/auth'
+import { ensureAutoSimulationRunner } from '@/lib/mesociety/runner'
 import { getSessionView } from '@/lib/mesociety/simulation'
 
 export const metadata: Metadata = {
@@ -14,14 +15,14 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode
 }) {
+  await ensureAutoSimulationRunner()
   const user = await getCurrentUser()
   const session = await getSessionView(user)
 
   return (
     <html lang="zh-CN">
       <body>
-        <GlobalNav session={session} />
-        <main>{children}</main>
+        <RootShell session={session}>{children}</RootShell>
       </body>
     </html>
   )

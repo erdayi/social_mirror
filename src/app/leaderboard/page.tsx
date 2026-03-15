@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { LeaderboardMedal } from '@/components/mesociety/leaderboard-medal'
 import { SiteFrame } from '@/components/mesociety/site-frame'
 import { WorldAgentSprite } from '@/components/mesociety/world-agent-sprite'
 import { getLeaderboardView } from '@/lib/mesociety/simulation'
@@ -38,7 +39,10 @@ export default async function LeaderboardPage() {
               href={`/agents/${entry.agentId}`}
               className="board-row grid-cols-[0.8fr_2.4fr_repeat(5,1fr)]"
             >
-              <span className="text-sm font-black text-[rgba(249,233,199,0.72)]">#{entry.rank}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-black text-[rgba(249,233,199,0.72)]">#{entry.rank}</span>
+                <LeaderboardMedal rank={entry.rank} />
+              </div>
               <div className="flex items-center gap-3">
                 <WorldAgentSprite
                   name={entry.name}

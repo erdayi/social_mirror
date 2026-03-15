@@ -45,15 +45,19 @@ function getTurnActivity(roundtable: RoundtableSummary, agentId: string) {
 
 export function RoundtableScene({ roundtable }: Props) {
   const visibleParticipants = roundtable.participants.slice(0, seatMap.length)
+  const latestTurn = roundtable.turns[roundtable.turns.length - 1]
 
   return (
     <div className="roundtable-scene">
       <div className="roundtable-room">
+        <div className="roundtable-ambient-grid" />
         <div className="roundtable-window-grid" />
+        <div className="roundtable-lantern left-8 top-8" />
+        <div className="roundtable-lantern right-8 top-8" />
         <div className="roundtable-table">
           <div className="roundtable-table-top" />
           <div className="roundtable-topic-plaque">
-            <span className="pixel-label text-[#6e451d]">当前议题</span>
+            <span className="pixel-label text-[#72e7ff]">当前议题</span>
             <span className="roundtable-topic-text">{roundtable.topic}</span>
           </div>
         </div>
@@ -61,6 +65,7 @@ export function RoundtableScene({ roundtable }: Props) {
         {visibleParticipants.map((participant, index) => {
           const seat = seatMap[index]
           const isHost = participant.role === 'host'
+          const isSpeaker = latestTurn?.speakerId === participant.id
 
           return (
             <Link
@@ -77,14 +82,32 @@ export function RoundtableScene({ roundtable }: Props) {
                 status={participant.status}
                 moving={false}
                 seated
-                facing={seat.facing}
+                direction={seat.facing === 'left' ? 'left' : 'right'}
+                mode={isSpeaker ? 'talking' : 'seated'}
+                voiceActive={Boolean(isSpeaker && latestTurn?.audioUrl)}
                 emphasis={isHost}
                 activity={getTurnActivity(roundtable, participant.id)}
                 showPlate={false}
               />
+              {isSpeaker ? <span className="roundtable-speaker-chip">发言中</span> : null}
             </Link>
           )
         })}
+
+        {latestTurn ? (
+          <div className="roundtable-live-bar">
+            <div>
+              <p className="pixel-label text-[#72e7ff]">当前轮次</p>
+              <p className="mt-2 text-sm font-black text-[#ffe9ae]">
+                {latestTurn.speakerName || '系统'} · {latestTurn.stage}
+              </p>
+              <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.78)]">
+                {latestTurn.content}
+              </p>
+            </div>
+            {latestTurn.audioUrl ? <span className="roundtable-voice-pill">语音播报中</span> : null}
+          </div>
+        ) : null}
       </div>
     </div>
   )

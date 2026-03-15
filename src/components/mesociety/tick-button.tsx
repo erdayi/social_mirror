@@ -25,8 +25,9 @@ export function TickButton() {
       onClick={handleTick}
       disabled={pending}
       className="pixel-button"
+      title="仅用于调试；正常情况下社会会自动推进。"
     >
-      {pending ? '推进中...' : '手动推进一轮'}
+      {pending ? '推进中...' : '调试推进一轮'}
     </button>
   )
 }

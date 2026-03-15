@@ -15,11 +15,11 @@ export async function GET(request: NextRequest) {
   const error = request.nextUrl.searchParams.get('error')
 
   if (error) {
-    return NextResponse.redirect(new URL('/?error=access_denied', request.url))
+    return NextResponse.redirect(new URL('/login?error=access_denied', request.url))
   }
 
   if (!code) {
-    return NextResponse.redirect(new URL('/api/auth?action=login', request.url))
+    return NextResponse.redirect(new URL('/login', request.url))
   }
 
   try {
@@ -64,6 +64,6 @@ export async function GET(request: NextRequest) {
     return response
   } catch (routeError) {
     console.error('SecondMe OAuth callback failed:', routeError)
-    return NextResponse.redirect(new URL('/?error=auth_failed', request.url))
+    return NextResponse.redirect(new URL('/login?error=auth_failed', request.url))
   }
 }

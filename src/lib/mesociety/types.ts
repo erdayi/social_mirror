@@ -9,12 +9,17 @@ import type {
   RoundtableParticipant,
   RoundtableTurn,
   ScoreSnapshot,
-  SocialEvent,
   User,
   ZonePresence,
   ZoneType,
   ZhihuIntegrationState,
 } from '@prisma/client'
+import type {
+  SocialCareer,
+  SocialFaction,
+  SocialGoal,
+} from '@/lib/mesociety/social'
+import type { DistrictId } from '@/lib/mesociety/world-map'
 
 export type AgentWithSnapshot = Agent & {
   snapshots: AgentSnapshot[]
@@ -59,14 +64,163 @@ export type WorldAgentView = {
   stance: AgentStance
   style: AgentBehaviorStyle
   influence: number
+  districtId: DistrictId
+  districtLabel: string
+  workPointId: string | null
+  workPointLabel: string | null
+  career: SocialCareer
+  faction: SocialFaction
+  primaryGoal: SocialGoal
+  secondaryGoal: SocialGoal
 }
 
-export type WorldEventView = Pick<SocialEvent, 'id' | 'type' | 'topic' | 'summary' | 'createdAt'> & {
+export type WorldEventView = {
+  id: string
+  type: string
+  topic: string | null
+  summary: string | null
+  createdAt: Date | string
   actorId?: string
   actorName?: string
   targetId?: string
   targetName?: string
   zone?: ZoneType | null
+  metadata?: Record<string, unknown> | null
+}
+
+export type AgentSocietyStats = {
+  productionScore: number
+  resourceScore: number
+  allianceScore: number
+  tradeScore: number
+  knowledgeScore: number
+  socialCapital: number
+  momentumLabel: string
+}
+
+export type SocietyPulseView = {
+  activeWorkers: number
+  allianceEdges: number
+  knowledgeOutputs: number
+  liveTopics: number
+  outputUnits: number
+  exchangeLinks: number
+  investmentUnits: number
+  consumptionUnits: number
+  systemBalanceUnits: number
+  dominantResource: string
+}
+
+export type EconomyFlowView = {
+  resource: string
+  label: string
+  outputUnits: number
+  exchangeCount: number
+  investmentUnits: number
+  consumptionUnits: number
+  balanceUnits: number
+  dominantDistrict: string
+}
+
+export type EconomyWorkPointView = {
+  workPointId: string
+  label: string
+  districtLabel: string
+  resourceLabel: string
+  activeAgents: number
+  outputUnits: number
+  exchangeCount: number
+}
+
+export type DistrictProsperityView = {
+  districtId: DistrictId
+  label: string
+  prosperityScore: number
+  levelLabel: string
+  stabilityLabel: string
+  residentCount: number
+  outputUnits: number
+  exchangeCount: number
+  dividendUnits: number
+  investmentUnits: number
+  upkeepUnits: number
+  treasuryBalance: number
+  allianceLinks: number
+  knowledgeOutputs: number
+  dominantResource: string
+  trendLabel: string
+}
+
+export type AgentResourceInventoryView = {
+  resource: string
+  label: string
+  producedUnits: number
+  receivedUnits: number
+  sharedUnits: number
+  dividendUnits: number
+  consumedUnits: number
+  investedUnits: number
+  netUnits: number
+}
+
+export type AgentAllianceDividendView = {
+  receivedUnits: number
+  sharedUnits: number
+  activePartners: number
+  topPartner: string | null
+}
+
+export type AgentEconomyView = {
+  totalInventoryUnits: number
+  consumptionUnits: number
+  investmentUnits: number
+  supportBalance: number
+  stewardshipLabel: string
+  dominantResource: string
+  resources: AgentResourceInventoryView[]
+  allianceDividend: AgentAllianceDividendView
+}
+
+export type DistrictUpgradePlanView = {
+  districtId: DistrictId
+  districtLabel: string
+  title: string
+  description: string
+  requiredResourceKey: string
+  requiredResourceLabel: string
+  requiredUnits: number
+  fundedUnits: number
+  progressPercent: number
+  stage: string
+  sponsorAgentId: string | null
+  sponsorAgentName: string | null
+}
+
+export type AllianceDividendRouteView = {
+  sourceAgentId: string
+  sourceAgentName: string
+  targetAgentId: string
+  targetAgentName: string
+  units: number
+  relationshipType: string
+  districtLabel: string
+  resourceLabel: string
+}
+
+export type SocietyEconomyView = {
+  totalOutputUnits: number
+  totalExchangeLinks: number
+  totalDividendUnits: number
+  totalInvestmentUnits: number
+  totalConsumptionUnits: number
+  systemBalanceUnits: number
+  dominantResource: string
+  mostProsperousDistrict: string
+  flows: EconomyFlowView[]
+  workPoints: EconomyWorkPointView[]
+  districts: DistrictProsperityView[]
+  projects: DistrictUpgradePlanView[]
+  dividendRoutes: AllianceDividendRouteView[]
 }
 
 export type WorldStateView = {
@@ -85,6 +239,32 @@ export type WorldStateView = {
   activeRoundtable: RoundtableSummary | null
   recentEvents: WorldEventView[]
   zhihu: ZhihuStatusView[]
+  pulse: SocietyPulseView
+  economy: SocietyEconomyView
+  map: {
+    width: number
+    height: number
+    chunkSize: number
+    workPoints: Array<{
+      id: string
+      districtId: DistrictId
+      label: string
+      kind: string
+      x: number
+      y: number
+    }>
+    districts: Array<{
+      id: DistrictId
+      label: string
+      description: string
+      x: number
+      y: number
+      width: number
+      height: number
+      zoneFocus: ZoneType
+      theme: string
+    }>
+  }
 }
 
 export type AgentDetailView = {
@@ -101,6 +281,8 @@ export type AgentDetailView = {
     } | null
   }
   latestScore: LeaderboardEntry | null
+  societyStats: AgentSocietyStats
+  economy: AgentEconomyView
   relationships: Array<{
     id: string
     type: string
@@ -145,6 +327,7 @@ export type RoundtableSummary = {
     origin: string | null
     degraded: boolean
     content: string
+    audioUrl: string | null
     createdAt: string
   }>
 }
@@ -164,6 +347,11 @@ export type GraphView = {
     target: string
     weight: number
   }>
+  meta: {
+    backend: 'mysql' | 'neo4j'
+    neo4jStatus: 'not_configured' | 'driver_missing' | 'connected' | 'error'
+    reason?: string | null
+  }
 }
 
 export type ZhihuStatusView = {
@@ -171,6 +359,9 @@ export type ZhihuStatusView = {
   label: string
   state: ZhihuIntegrationState
   description: string
+  worldRole?: string
+  expectedData?: string
+  integrationHint?: string
 }
 
 export type ScoreCard = Pick<

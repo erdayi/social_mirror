@@ -10,15 +10,15 @@ export async function GET(request: NextRequest) {
     try {
       return NextResponse.redirect(buildSecondMeAuthUrl())
     } catch (error) {
-      return NextResponse.json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : 'SecondMe credentials are not configured.',
-        },
-        { status: 503 }
+      const url = new URL('/login', request.url)
+      url.searchParams.set('error', 'config_missing')
+      url.searchParams.set(
+        'message',
+        error instanceof Error
+          ? error.message
+          : 'SecondMe credentials are not configured.'
       )
+      return NextResponse.redirect(url)
     }
   }
 

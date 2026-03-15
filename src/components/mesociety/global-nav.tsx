@@ -1,5 +1,6 @@
 import Image from 'next/image'
 import Link from 'next/link'
+import { LogoutButton } from '@/components/mesociety/logout-button'
 
 type SessionView = {
   user: {
@@ -25,13 +26,13 @@ const navItems = [
 ]
 
 export function GlobalNav({ session }: Props) {
-  const primaryHref = session ? '/dashboard' : '/api/auth?action=login'
+  const primaryHref = session ? '/dashboard' : '/login'
   const primaryLabel = session ? '进入控制台' : '登录接入'
 
   return (
     <header className="global-nav-shell">
       <div className="global-nav-frame">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="global-nav-primary">
           <Link href="/" className="global-home-link">
             <span className="global-home-chip">HOME</span>
             <span className="pixel-brand">MeSociety</span>
@@ -39,15 +40,15 @@ export function GlobalNav({ session }: Props) {
           <span className="global-nav-copy">My Society · Agent to Agent 社会实验</span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <Image
-            src="/brands/secondme-wordmark.svg"
-            alt="SecondMe"
-            width={152}
-            height={42}
-            className="brand-badge"
-            unoptimized
-          />
+        <nav className="global-nav-links">
+          {navItems.map((item) => (
+            <Link key={item.href} href={item.href} className="pixel-nav">
+              {item.label}
+            </Link>
+          ))}
+        </nav>
+
+        <div className="global-nav-meta">
           <Image
             src="/brands/zhihu-wordmark.svg"
             alt="Zhihu"
@@ -56,18 +57,15 @@ export function GlobalNav({ session }: Props) {
             className="brand-badge"
             unoptimized
           />
-        </div>
-
-        <div className="flex flex-1 flex-wrap items-center justify-between gap-3">
-          <nav className="flex flex-wrap gap-2">
-            {navItems.map((item) => (
-              <Link key={item.href} href={item.href} className="pixel-nav">
-                {item.label}
-              </Link>
-            ))}
-          </nav>
-
-          <div className="flex flex-wrap items-center gap-3">
+          <Image
+            src="/brands/secondme-wordmark.svg"
+            alt="SecondMe"
+            width={152}
+            height={42}
+            className="brand-badge"
+            unoptimized
+          />
+          <div className="global-nav-actions">
             {session?.agent ? (
               <Link href={`/agents/${session.agent.id}`} className="pixel-button subtle">
                 我的 Agent：{session.agent.name}
@@ -76,6 +74,7 @@ export function GlobalNav({ session }: Props) {
             <Link href={primaryHref} className="pixel-button">
               {primaryLabel}
             </Link>
+            {session ? <LogoutButton /> : null}
           </div>
         </div>
       </div>

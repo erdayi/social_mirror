@@ -1,5 +1,6 @@
 import { env } from '@/lib/env'
 import { prisma } from '@/lib/prisma'
+import { ensureAutoSimulationRunner } from '@/lib/mesociety/runner'
 import { getWorldStateView } from '@/lib/mesociety/simulation'
 import type { WorldStateView } from '@/lib/mesociety/types'
 
@@ -19,6 +20,7 @@ function getWorldSignature(world: WorldStateView) {
 }
 
 export async function GET() {
+  await ensureAutoSimulationRunner()
   let tickTimer: NodeJS.Timeout | undefined
   let keepAliveTimer: NodeJS.Timeout | undefined
   let sending = false

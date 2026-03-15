@@ -28,8 +28,18 @@ export const env = {
     tickIntervalMs: getNumberEnv('SIM_TICK_INTERVAL_MS', 20_000),
     minWorldAgentCount: getNumberEnv('MIN_WORLD_AGENT_COUNT', 10),
   },
+  neo4j: {
+    uri: process.env.NEO4J_URI || '',
+    username: process.env.NEO4J_USERNAME || '',
+    password: process.env.NEO4J_PASSWORD || '',
+    database: process.env.NEO4J_DATABASE || '',
+  },
 }
 
 export function hasSecondMeCredentials() {
   return Boolean(env.secondMe.clientId && env.secondMe.clientSecret)
+}
+
+export function hasNeo4jCredentials() {
+  return Boolean(env.neo4j.uri && env.neo4j.username && env.neo4j.password)
 }

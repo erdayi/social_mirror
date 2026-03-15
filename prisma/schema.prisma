@@ -141,6 +141,7 @@ model Agent {
   scores              ScoreSnapshot[]
   actorEvents         SocialEvent[]       @relation("EventActor")
   targetEvents        SocialEvent[]       @relation("EventTarget")
+  resourceBalances    AgentResourceBalance[]
 
   @@index([currentZone])
   @@index([status])
@@ -168,10 +169,55 @@ model WorldState {
   tickCount   Int      @default(0)
   status      String   @default("running")
   lastTickAt  DateTime?
+  economySnapshot Json?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@map("world_state")
+}
+
+model AgentResourceBalance {
+  id             String   @id @default(cuid())
+  agentId        String
+  agent          Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  resourceKey    String
+  resourceLabel  String
+  producedUnits  Float    @default(0)
+  receivedUnits  Float    @default(0)
+  sharedUnits    Float    @default(0)
+  dividendUnits  Float    @default(0)
+  consumedUnits  Float    @default(0)
+  investedUnits  Float    @default(0)
+  netUnits       Float    @default(0)
+  tickNumber     Int?
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+
+  @@unique([agentId, resourceKey])
+  @@index([resourceKey, netUnits(sort: Desc)])
+  @@map("agent_resource_balances")
+}
+
+model DistrictUpgradePlan {
+  id                    String   @id
+  districtLabel         String
+  title                 String
+  description           String?  @db.Text
+  requiredResourceKey   String
+  requiredResourceLabel String
+  requiredUnits         Float
+  fundedUnits           Float    @default(0)
+  progressPercent       Float    @default(0)
+  stage                 String   @default("planning")
+  sponsorAgentId        String?
+  sponsorAgentName      String?
+  tickNumber            Int?
+  completedAt           DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([stage, progressPercent(sort: Desc)])
+  @@map("district_upgrade_plans")
 }
 
 model ZonePresence {
@@ -266,6 +312,7 @@ model RoundtableTurn {
   speakerAgentId String?
   speakerAgent   Agent?           @relation("RoundtableSpeaker", fields: [speakerAgentId], references: [id], onDelete: SetNull)
   content        String           @db.Text
+  audioUrl       String?          @db.Text
   metadata       Json?
   createdAt      DateTime         @default(now())
 

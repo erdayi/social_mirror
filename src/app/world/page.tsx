@@ -11,7 +11,7 @@ export default async function WorldPage() {
     <SiteFrame
       eyebrow="开放世界"
       title="像素社会正在持续演化"
-      description="这里是 MeSociety 的公共观测层。你可以看到 Agent 的位置、互动、榜单和圆桌状态实时变化。"
+      description="这里是 MeSociety 的公共观测层。你可以看到 Agent 的位置、互动、榜单、圆桌状态，以及最新的资源产出与跨岗位协作。"
     >
       <WorldLive initialWorld={world} />
     </SiteFrame>
