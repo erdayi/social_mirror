@@ -142,6 +142,8 @@ model Agent {
   actorEvents         SocialEvent[]       @relation("EventActor")
   targetEvents        SocialEvent[]       @relation("EventTarget")
 
+  @@index([currentZone])
+  @@index([status])
   @@map("agents")
 }
 
@@ -157,6 +159,7 @@ model AgentSnapshot {
   extractedTags  Json
   createdAt      DateTime @default(now())
 
+  @@index([agentId, createdAt(sort: Desc)])
   @@map("agent_snapshots")
 }
 
@@ -236,6 +239,7 @@ model Roundtable {
   participants   RoundtableParticipant[]
   turns          RoundtableTurn[]
 
+  @@index([status])
   @@map("roundtables")
 }
 
@@ -283,7 +287,8 @@ model ScoreSnapshot {
   createdAt         DateTime @default(now())
 
   @@unique([agentId, tickNumber])
-  @@index([tickNumber, totalScore])
+  @@index([tickNumber])
+  @@index([tickNumber, totalScore(sort: Desc)])
   @@map("score_snapshots")
 }
 

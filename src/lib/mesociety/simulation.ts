@@ -83,7 +83,7 @@ const fallbackTopics = [
   '知识图谱能否描述真实关系',
 ]
 
-const VIEW_CACHE_TTL_MS = 4_000
+const VIEW_CACHE_TTL_MS = 15_000
 
 type ViewReadOptions = {
   allowTick?: boolean
@@ -1634,19 +1634,18 @@ export async function runSimulationTick() {
 }
 
 async function getLatestScoreSnapshots() {
-  const latestTick = await prisma.scoreSnapshot.aggregate({
-    _max: {
-      tickNumber: true,
-    },
+  const latestSnapshot = await prisma.scoreSnapshot.findFirst({
+    select: { tickNumber: true },
+    orderBy: { tickNumber: 'desc' },
   })
 
-  if (!latestTick._max.tickNumber) {
+  if (!latestSnapshot) {
     return []
   }
 
   return prisma.scoreSnapshot.findMany({
     where: {
-      tickNumber: latestTick._max.tickNumber,
+      tickNumber: latestSnapshot.tickNumber,
     },
     include: {
       agent: true,

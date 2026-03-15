@@ -1,4 +1,5 @@
 import { env } from '@/lib/env'
+import { prisma } from '@/lib/prisma'
 import { getWorldStateView } from '@/lib/mesociety/simulation'
 import type { WorldStateView } from '@/lib/mesociety/types'
 
@@ -21,17 +22,30 @@ export async function GET() {
   let tickTimer: NodeJS.Timeout | undefined
   let keepAliveTimer: NodeJS.Timeout | undefined
   let sending = false
+  let lastTickCount = -1
   let lastSignature = ''
 
   const stream = new ReadableStream({
     async start(controller) {
       const sendWorld = async (force = false) => {
+        if (!force) {
+          const worldState = await prisma.worldState.findUnique({
+            where: { id: 1 },
+            select: { tickCount: true },
+          })
+
+          if (worldState && worldState.tickCount === lastTickCount) {
+            return
+          }
+        }
+
         const world = await getWorldStateView()
         const nextSignature = getWorldSignature(world)
         if (!force && nextSignature === lastSignature) {
           return
         }
 
+        lastTickCount = world.tickCount
         lastSignature = nextSignature
         controller.enqueue(
           encoder.encode(`event: world\ndata: ${JSON.stringify(world)}\n\n`)
@@ -67,11 +81,11 @@ export async function GET() {
         } finally {
           sending = false
         }
-      }, Math.max(4_000, Math.floor(env.simulation.tickIntervalMs / 2)))
+      }, 5_000)
 
       keepAliveTimer = setInterval(() => {
         controller.enqueue(encoder.encode(': keep-alive\n\n'))
-      }, 10_000)
+      }, 15_000)
 
       return close
     },
