@@ -11,6 +11,6 @@ export async function POST() {
 
   await maybeRunSimulationTick(true)
   return NextResponse.json({
-    world: await getWorldStateView(),
+    world: await getWorldStateView({ forceFresh: true }),
   })
 }

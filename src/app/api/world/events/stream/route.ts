@@ -1,20 +1,38 @@
 import { env } from '@/lib/env'
 import { getWorldStateView } from '@/lib/mesociety/simulation'
+import type { WorldStateView } from '@/lib/mesociety/types'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 const encoder = new TextEncoder()
 
+function getWorldSignature(world: WorldStateView) {
+  return [
+    world.tickCount,
+    world.lastTickAt || 'never',
+    world.activeRoundtable?.id || 'none',
+    world.activeRoundtable?.turns[world.activeRoundtable.turns.length - 1]?.id || 'none',
+    world.recentEvents[0]?.id || 'none',
+  ].join(':')
+}
+
 export async function GET() {
   let tickTimer: NodeJS.Timeout | undefined
   let keepAliveTimer: NodeJS.Timeout | undefined
   let sending = false
+  let lastSignature = ''
 
   const stream = new ReadableStream({
     async start(controller) {
-      const sendWorld = async () => {
+      const sendWorld = async (force = false) => {
         const world = await getWorldStateView()
+        const nextSignature = getWorldSignature(world)
+        if (!force && nextSignature === lastSignature) {
+          return
+        }
+
+        lastSignature = nextSignature
         controller.enqueue(
           encoder.encode(`event: world\ndata: ${JSON.stringify(world)}\n\n`)
         )
@@ -30,7 +48,7 @@ export async function GET() {
         }
       }
 
-      await sendWorld()
+      await sendWorld(true)
 
       tickTimer = setInterval(async () => {
         if (sending) {

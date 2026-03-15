@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="48" viewBox="0 0 128 48" fill="none">
+  <rect x="1" y="1" width="126" height="46" rx="12" fill="#0B4FCF" stroke="#92C3FF" stroke-width="2"/>
+  <rect x="12" y="10" width="30" height="28" fill="#08389A"/>
+  <rect x="16" y="14" width="4" height="4" fill="#FFFFFF"/>
+  <rect x="20" y="14" width="4" height="4" fill="#FFFFFF"/>
+  <rect x="24" y="14" width="4" height="4" fill="#FFFFFF"/>
+  <rect x="28" y="14" width="4" height="4" fill="#FFFFFF"/>
+  <rect x="20" y="18" width="4" height="4" fill="#FFFFFF"/>
+  <rect x="20" y="22" width="4" height="4" fill="#FFFFFF"/>
+  <rect x="24" y="22" width="4" height="4" fill="#FFFFFF"/>
+  <rect x="28" y="22" width="4" height="4" fill="#FFFFFF"/>
+  <rect x="16" y="26" width="4" height="4" fill="#FFFFFF"/>
+  <rect x="20" y="26" width="4" height="4" fill="#FFFFFF"/>
+  <rect x="24" y="26" width="4" height="4" fill="#FFFFFF"/>
+  <rect x="28" y="26" width="4" height="4" fill="#FFFFFF"/>
+  <rect x="32" y="18" width="4" height="4" fill="#FFFFFF"/>
+  <rect x="32" y="22" width="4" height="4" fill="#FFFFFF"/>
+  <text x="52" y="31" fill="#FFFFFF" font-family="Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="20" font-weight="700">知乎</text>
+</svg>

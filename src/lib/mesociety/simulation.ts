@@ -83,6 +83,68 @@ const fallbackTopics = [
   '知识图谱能否描述真实关系',
 ]
 
+const VIEW_CACHE_TTL_MS = 4_000
+
+type ViewReadOptions = {
+  allowTick?: boolean
+  forceFresh?: boolean
+}
+
+type ViewCacheEntry = {
+  expiresAt: number
+  value: unknown
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __mesocietyViewCache: Map<string, ViewCacheEntry> | undefined
+}
+
+function getViewCacheStore() {
+  if (!globalThis.__mesocietyViewCache) {
+    globalThis.__mesocietyViewCache = new Map()
+  }
+
+  return globalThis.__mesocietyViewCache
+}
+
+function invalidateViewCache(key?: string) {
+  const store = getViewCacheStore()
+
+  if (key) {
+    store.delete(key)
+    return
+  }
+
+  store.clear()
+}
+
+async function readCachedView<T>(
+  key: string,
+  loader: () => Promise<T>,
+  options?: {
+    forceFresh?: boolean
+    ttlMs?: number
+  }
+) {
+  const store = getViewCacheStore()
+  const now = Date.now()
+
+  if (!options?.forceFresh) {
+    const cached = store.get(key)
+    if (cached && cached.expiresAt > now) {
+      return cached.value as T
+    }
+  }
+
+  const value = await loader()
+  store.set(key, {
+    value,
+    expiresAt: now + (options?.ttlMs ?? VIEW_CACHE_TTL_MS),
+  })
+  return value
+}
+
 function slugify(input: string) {
   return input
     .toLowerCase()
@@ -502,6 +564,10 @@ async function ensureSeedAgents() {
       },
     })
   }
+
+  if (candidates.length > 0) {
+    invalidateViewCache()
+  }
 }
 
 async function ensureZonePresence() {
@@ -620,6 +686,7 @@ export async function syncRealAgentForUser(
   })
 
   await ensureSeedAgents()
+  invalidateViewCache()
   return agent
 }
 
@@ -1562,6 +1629,8 @@ export async function runSimulationTick() {
       status: 'running',
     },
   })
+
+  invalidateViewCache()
 }
 
 async function getLatestScoreSnapshots() {
@@ -1624,6 +1693,8 @@ function buildRoundtableSummary(
     hostName: roundtable.hostAgent.displayName,
     hostId: roundtable.hostAgentId,
     hostPortraitPath: getPortraitForAgent(roundtable.hostAgent.slug),
+    hostPixelRole: roundtable.hostAgent.pixelRole,
+    hostPixelPalette: roundtable.hostAgent.pixelPalette,
     participants: roundtable.participants.map((participant) => ({
       id: participant.agentId,
       name: participant.agent.displayName,
@@ -1631,6 +1702,9 @@ function buildRoundtableSummary(
       contributionScore: participant.contributionScore,
       source: participant.agent.source,
       portraitPath: getPortraitForAgent(participant.agent.slug),
+      pixelRole: participant.agent.pixelRole,
+      pixelPalette: participant.agent.pixelPalette,
+      status: participant.agent.status,
     })),
     summary: roundtable.summary,
     knowledge:
@@ -1657,226 +1731,303 @@ function buildRoundtableSummary(
   }
 }
 
-export async function getWorldStateView() {
-  await maybeRunSimulationTick()
-
-  const [worldState, agents, leaderboard, events, activeRoundtable, zhihu] = await Promise.all([
-    ensureWorldState(),
-    listAgents(),
-    buildLeaderboard(),
-    prisma.socialEvent.findMany({
-      include: {
-        actorAgent: true,
-        targetAgent: true,
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 18,
-    }),
-    getActiveRoundtable(),
-    listZhihuCapabilities(),
-  ])
-
-  return {
-    tickCount: worldState.tickCount,
-    lastTickAt: worldState.lastTickAt?.toISOString() || null,
-    intervals: {
-      tickMs: env.simulation.tickIntervalMs,
-    },
-    zones: ZONE_META.map((zone) => ({
-      id: zone.id,
-      label: zone.label,
-      description: zone.description,
-    })),
-    agents: agents.map(buildWorldAgentView),
-    leaderboard: leaderboard.slice(0, 10),
-    activeRoundtable: activeRoundtable ? buildRoundtableSummary(activeRoundtable) : null,
-    recentEvents: events.map((event) => ({
-      id: event.id,
-      type: event.type,
-      topic: event.topic,
-      summary: event.summary,
-      createdAt: event.createdAt,
-      actorName: event.actorAgent?.displayName,
-      targetName: event.targetAgent?.displayName,
-      zone: event.zone,
-    })),
-    zhihu: zhihu.map<ZhihuStatusView>((item) => ({
-      id: item.id,
-      label: item.label,
-      state: item.state,
-      description: item.description || '待接入官方接口。',
-    })),
-  } satisfies WorldStateView
-}
-
-export async function getLeaderboardView() {
-  await maybeRunSimulationTick()
-  return buildLeaderboard()
-}
-
-export async function getAgentDetailView(agentId: string) {
-  await maybeRunSimulationTick()
-
-  const [agent, leaderboard, relationships, events] = await Promise.all([
-    prisma.agent.findUnique({
-      where: { id: agentId },
-      include: {
-        snapshots: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
-        zonePresence: true,
-        user: true,
-      },
-    }),
-    buildLeaderboard(),
-    prisma.relationship.findMany({
-      where: {
-        OR: [{ sourceAgentId: agentId }, { targetAgentId: agentId }],
-      },
-      include: {
-        sourceAgent: true,
-        targetAgent: true,
-      },
-      orderBy: { updatedAt: 'desc' },
-      take: 12,
-    }),
-    prisma.socialEvent.findMany({
-      where: {
-        OR: [{ actorAgentId: agentId }, { targetAgentId: agentId }],
-      },
-      include: {
-        actorAgent: true,
-        targetAgent: true,
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 10,
-    }),
-  ])
-
-  if (!agent) {
-    return null
+export async function getWorldStateView(options: ViewReadOptions = {}) {
+  if (options.allowTick) {
+    await maybeRunSimulationTick()
   }
 
-  const snapshot = getLatestSnapshot(agent)
-  const latestScore = leaderboard.find((item) => item.agentId === agent.id) || null
+  return readCachedView(
+    'world',
+    async () => {
+      await ensureWorldInitialized()
 
-  return {
-    agent: {
-      ...buildWorldAgentView(agent),
-      bio: agent.bio,
-      slug: agent.slug,
-      isPlayable: agent.isPlayable,
-      snapshot: snapshot
-        ? {
-            identity: toRecord(snapshot.identity),
-            interests: toRecord(snapshot.interests),
-            memory: toRecord(snapshot.memory),
-            behavior: toRecord(snapshot.behavior),
-            extractedTags: toRecord(snapshot.extractedTags),
-          }
-        : null,
+      const [worldState, agents, leaderboard, events, activeRoundtable, zhihu] = await Promise.all([
+        ensureWorldState(),
+        listAgents(),
+        buildLeaderboard(),
+        prisma.socialEvent.findMany({
+          include: {
+            actorAgent: true,
+            targetAgent: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 18,
+        }),
+        getActiveRoundtable(),
+        listZhihuCapabilities(),
+      ])
+
+      return {
+        tickCount: worldState.tickCount,
+        lastTickAt: worldState.lastTickAt?.toISOString() || null,
+        intervals: {
+          tickMs: env.simulation.tickIntervalMs,
+        },
+        zones: ZONE_META.map((zone) => ({
+          id: zone.id,
+          label: zone.label,
+          description: zone.description,
+        })),
+        agents: agents.map(buildWorldAgentView),
+        leaderboard: leaderboard.slice(0, 10),
+        activeRoundtable: activeRoundtable ? buildRoundtableSummary(activeRoundtable) : null,
+        recentEvents: events.map((event) => ({
+          id: event.id,
+          type: event.type,
+          topic: event.topic,
+          summary: event.summary,
+          createdAt: event.createdAt,
+          actorId: event.actorAgentId || undefined,
+          actorName: event.actorAgent?.displayName,
+          targetId: event.targetAgentId || undefined,
+          targetName: event.targetAgent?.displayName,
+          zone: event.zone,
+        })),
+        zhihu: zhihu.map<ZhihuStatusView>((item) => ({
+          id: item.id,
+          label: item.label,
+          state: item.state,
+          description: item.description || '待接入官方接口。',
+        })),
+      } satisfies WorldStateView
     },
-    latestScore,
-    relationships: relationships.map((relationship) => ({
-      id: relationship.id,
-      type: relationship.type,
-      strength: relationship.strength,
-      sourceName: relationship.sourceAgent.displayName,
-      targetName: relationship.targetAgent.displayName,
-    })),
-    recentEvents: events.map((event) => ({
-      id: event.id,
-      type: event.type,
-      topic: event.topic,
-      summary: event.summary,
-      createdAt: event.createdAt,
-      actorName: event.actorAgent?.displayName,
-      targetName: event.targetAgent?.displayName,
-      zone: event.zone,
-    })),
-  } satisfies AgentDetailView
+    {
+      forceFresh: options.forceFresh,
+    }
+  )
 }
 
-export async function getRoundtableListView() {
-  await maybeRunSimulationTick()
+export async function getLeaderboardView(options: ViewReadOptions = {}) {
+  if (options.allowTick) {
+    await maybeRunSimulationTick()
+  }
 
-  const roundtables = await prisma.roundtable.findMany({
-    include: {
-      hostAgent: true,
-      participants: {
-        include: {
-          agent: true,
-        },
-      },
-      turns: {
-        include: {
-          speakerAgent: true,
-        },
-        orderBy: { turnIndex: 'asc' },
-      },
+  return readCachedView(
+    'leaderboard',
+    async () => {
+      await ensureWorldInitialized()
+      return buildLeaderboard()
     },
-    orderBy: { createdAt: 'desc' },
-    take: 8,
-  })
-
-  return roundtables.map(buildRoundtableSummary)
+    {
+      forceFresh: options.forceFresh,
+    }
+  )
 }
 
-export async function getRoundtableDetailView(roundtableId: string) {
-  await maybeRunSimulationTick()
+export async function getAgentDetailView(agentId: string, options: ViewReadOptions = {}) {
+  if (options.allowTick) {
+    await maybeRunSimulationTick()
+  }
 
-  const roundtable = await prisma.roundtable.findUnique({
-    where: { id: roundtableId },
-    include: {
-      hostAgent: true,
-      participants: {
-        include: {
-          agent: true,
+  return readCachedView(
+    `agent:${agentId}`,
+    async () => {
+      await ensureWorldInitialized()
+
+      const [agent, leaderboard, relationships, events] = await Promise.all([
+        prisma.agent.findUnique({
+          where: { id: agentId },
+          include: {
+            snapshots: {
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
+            zonePresence: true,
+            user: true,
+          },
+        }),
+        buildLeaderboard(),
+        prisma.relationship.findMany({
+          where: {
+            OR: [{ sourceAgentId: agentId }, { targetAgentId: agentId }],
+          },
+          include: {
+            sourceAgent: true,
+            targetAgent: true,
+          },
+          orderBy: { updatedAt: 'desc' },
+          take: 12,
+        }),
+        prisma.socialEvent.findMany({
+          where: {
+            OR: [{ actorAgentId: agentId }, { targetAgentId: agentId }],
+          },
+          include: {
+            actorAgent: true,
+            targetAgent: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+        }),
+      ])
+
+      if (!agent) {
+        return null
+      }
+
+      const snapshot = getLatestSnapshot(agent)
+      const latestScore = leaderboard.find((item) => item.agentId === agent.id) || null
+
+      return {
+        agent: {
+          ...buildWorldAgentView(agent),
+          bio: agent.bio,
+          slug: agent.slug,
+          isPlayable: agent.isPlayable,
+          snapshot: snapshot
+            ? {
+                identity: toRecord(snapshot.identity),
+                interests: toRecord(snapshot.interests),
+                memory: toRecord(snapshot.memory),
+                behavior: toRecord(snapshot.behavior),
+                extractedTags: toRecord(snapshot.extractedTags),
+              }
+            : null,
         },
-      },
-      turns: {
-        include: {
-          speakerAgent: true,
-        },
-        orderBy: { turnIndex: 'asc' },
-      },
+        latestScore,
+        relationships: relationships.map((relationship) => ({
+          id: relationship.id,
+          type: relationship.type,
+          strength: relationship.strength,
+          sourceName: relationship.sourceAgent.displayName,
+          targetName: relationship.targetAgent.displayName,
+        })),
+        recentEvents: events.map((event) => ({
+          id: event.id,
+          type: event.type,
+          topic: event.topic,
+          summary: event.summary,
+          createdAt: event.createdAt,
+          actorId: event.actorAgentId || undefined,
+          actorName: event.actorAgent?.displayName,
+          targetId: event.targetAgentId || undefined,
+          targetName: event.targetAgent?.displayName,
+          zone: event.zone,
+        })),
+      } satisfies AgentDetailView
     },
-  })
-
-  return roundtable ? buildRoundtableSummary(roundtable) : null
+    {
+      forceFresh: options.forceFresh,
+    }
+  )
 }
 
-export async function getGraphView() {
-  await maybeRunSimulationTick()
+export async function getRoundtableListView(options: ViewReadOptions = {}) {
+  if (options.allowTick) {
+    await maybeRunSimulationTick()
+  }
 
-  const [nodes, edges] = await Promise.all([
-    prisma.graphNode.findMany({
-      orderBy: { updatedAt: 'desc' },
-      take: 28,
-    }),
-    prisma.graphEdge.findMany({
-      orderBy: { updatedAt: 'desc' },
-      take: 42,
-    }),
-  ])
+  return readCachedView(
+    'roundtables',
+    async () => {
+      await ensureWorldInitialized()
 
-  return {
-    nodes: nodes.map((node) => ({
-      id: node.id,
-      key: node.nodeKey,
-      type: node.nodeType,
-      label: node.label,
-      size: node.nodeType === 'agent' ? 18 : node.nodeType === 'topic' ? 15 : 12,
-    })),
-    edges: edges.map((edge) => ({
-      id: edge.id,
-      type: edge.edgeType,
-      source: edge.sourceNodeId,
-      target: edge.targetNodeId,
-      weight: edge.weight,
-    })),
-  } satisfies GraphView
+      const roundtables = await prisma.roundtable.findMany({
+        include: {
+          hostAgent: true,
+          participants: {
+            include: {
+              agent: true,
+            },
+          },
+          turns: {
+            include: {
+              speakerAgent: true,
+            },
+            orderBy: { turnIndex: 'asc' },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 8,
+      })
+
+      return roundtables.map(buildRoundtableSummary)
+    },
+    {
+      forceFresh: options.forceFresh,
+    }
+  )
+}
+
+export async function getRoundtableDetailView(roundtableId: string, options: ViewReadOptions = {}) {
+  if (options.allowTick) {
+    await maybeRunSimulationTick()
+  }
+
+  return readCachedView(
+    `roundtable:${roundtableId}`,
+    async () => {
+      await ensureWorldInitialized()
+
+      const roundtable = await prisma.roundtable.findUnique({
+        where: { id: roundtableId },
+        include: {
+          hostAgent: true,
+          participants: {
+            include: {
+              agent: true,
+            },
+          },
+          turns: {
+            include: {
+              speakerAgent: true,
+            },
+            orderBy: { turnIndex: 'asc' },
+          },
+        },
+      })
+
+      return roundtable ? buildRoundtableSummary(roundtable) : null
+    },
+    {
+      forceFresh: options.forceFresh,
+    }
+  )
+}
+
+export async function getGraphView(options: ViewReadOptions = {}) {
+  if (options.allowTick) {
+    await maybeRunSimulationTick()
+  }
+
+  return readCachedView(
+    'graph',
+    async () => {
+      await ensureWorldInitialized()
+
+      const [nodes, edges] = await Promise.all([
+        prisma.graphNode.findMany({
+          orderBy: { updatedAt: 'desc' },
+          take: 28,
+        }),
+        prisma.graphEdge.findMany({
+          orderBy: { updatedAt: 'desc' },
+          take: 42,
+        }),
+      ])
+
+      return {
+        nodes: nodes.map((node) => ({
+          id: node.id,
+          key: node.nodeKey,
+          type: node.nodeType,
+          label: node.label,
+          size: node.nodeType === 'agent' ? 18 : node.nodeType === 'topic' ? 15 : 12,
+        })),
+        edges: edges.map((edge) => ({
+          id: edge.id,
+          type: edge.edgeType,
+          source: edge.sourceNodeId,
+          target: edge.targetNodeId,
+          weight: edge.weight,
+        })),
+      } satisfies GraphView
+    },
+    {
+      forceFresh: options.forceFresh,
+      ttlMs: 6_000,
+    }
+  )
 }
 
 export async function getSessionView(user: (User & { agent?: Agent | null }) | null) {

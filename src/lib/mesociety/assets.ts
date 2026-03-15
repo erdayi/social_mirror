@@ -13,6 +13,19 @@ const portraitPool = [
   '/stardew/portraits/wizard.png',
 ]
 
+const spriteSheetPool = [
+  '/stardew/sprites/abigail.png',
+  '/stardew/sprites/elliott.png',
+  '/stardew/sprites/emily.png',
+  '/stardew/sprites/harvey.png',
+  '/stardew/sprites/leah.png',
+  '/stardew/sprites/maru.png',
+  '/stardew/sprites/robin.png',
+  '/stardew/sprites/sam.png',
+  '/stardew/sprites/sebastian.png',
+  '/stardew/sprites/wizard.png',
+]
+
 const zoneArt: Record<ZoneType, string> = {
   plaza: '/stardew/maps/spring-town.png',
   leaderboard: '/stardew/buildings/houses.png',
@@ -30,6 +43,10 @@ function hashString(input: string) {
 
 export function getPortraitForAgent(key: string) {
   return portraitPool[hashString(key) % portraitPool.length]
+}
+
+export function getSpriteSheetForAgent(key: string) {
+  return spriteSheetPool[hashString(key) % spriteSheetPool.length]
 }
 
 export function getZoneArtwork(zone: ZoneType) {

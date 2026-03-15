@@ -62,7 +62,9 @@ export type WorldAgentView = {
 }
 
 export type WorldEventView = Pick<SocialEvent, 'id' | 'type' | 'topic' | 'summary' | 'createdAt'> & {
+  actorId?: string
   actorName?: string
+  targetId?: string
   targetName?: string
   zone?: ZoneType | null
 }
@@ -116,6 +118,8 @@ export type RoundtableSummary = {
   hostName: string
   hostId: string
   hostPortraitPath: string
+  hostPixelRole: string
+  hostPixelPalette: string
   participants: Array<{
     id: string
     name: string
@@ -123,6 +127,9 @@ export type RoundtableSummary = {
     contributionScore: number
     source: AgentSource
     portraitPath: string
+    pixelRole: string
+    pixelPalette: string
+    status: AgentStatus
   }>
   summary: string | null
   knowledge: {

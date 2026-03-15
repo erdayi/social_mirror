@@ -29,7 +29,7 @@ export function GraphCanvas({ graph }: Props) {
 
   return (
     <div className="world-card overflow-hidden p-4">
-      <svg viewBox="0 0 840 460" className="h-[460px] w-full rounded-3xl bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.96),_rgba(224,241,229,0.9)_60%,_rgba(197,229,209,0.95))]">
+      <svg viewBox="0 0 840 460" className="h-[460px] w-full rounded-3xl bg-[radial-gradient(circle_at_top,_rgba(34,25,50,0.96),_rgba(24,18,37,0.94)_58%,_rgba(14,10,22,0.98))]">
         {graph.edges.map((edge) => {
           const source = byId.get(edge.source)
           const target = byId.get(edge.target)
@@ -45,7 +45,7 @@ export function GraphCanvas({ graph }: Props) {
                 y1={source.y}
                 x2={target.x}
                 y2={target.y}
-                stroke="rgba(22, 101, 52, 0.18)"
+                stroke="rgba(114, 231, 255, 0.18)"
                 strokeWidth={Math.max(1.5, edge.weight * 1.4)}
               />
               <text
@@ -53,7 +53,7 @@ export function GraphCanvas({ graph }: Props) {
                 y={(source.y + target.y) / 2 - 6}
                 fontSize="10"
                 textAnchor="middle"
-                fill="#3f5b44"
+                fill="#72e7ff"
               >
                 {edge.type}
               </text>
@@ -69,17 +69,17 @@ export function GraphCanvas({ graph }: Props) {
               r={node.size}
               fill={
                 node.type === 'agent'
-                  ? '#f7c873'
+                  ? '#f1b45e'
                   : node.type === 'topic'
-                    ? '#8fd3a6'
+                    ? '#7e7fcd'
                     : node.type === 'knowledge'
-                      ? '#93c5fd'
-                      : '#f8a97d'
+                      ? '#78b0f7'
+                      : '#d88f5b'
               }
-              stroke="#ffffff"
+              stroke="#f9e9c7"
               strokeWidth="4"
             />
-            <text x={node.x} y={node.y + 4} fontSize="11" textAnchor="middle" fill="#1f2937">
+            <text x={node.x} y={node.y + 4} fontSize="11" textAnchor="middle" fill="#140f1d">
               {node.label.slice(0, 4)}
             </text>
           </g>

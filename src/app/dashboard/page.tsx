@@ -1,10 +1,10 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
-import { AgentPortrait } from '@/components/mesociety/agent-portrait'
 import { AutoTickToggle } from '@/components/mesociety/auto-tick-toggle'
 import { SiteFrame } from '@/components/mesociety/site-frame'
 import { TickButton } from '@/components/mesociety/tick-button'
+import { WorldAgentSprite } from '@/components/mesociety/world-agent-sprite'
 import { getCurrentUser } from '@/lib/auth'
 import { getLeaderboardView, getSessionView, getWorldStateView } from '@/lib/mesociety/simulation'
 
@@ -22,8 +22,6 @@ export default async function DashboardPage() {
     getWorldStateView(),
     getLeaderboardView(),
   ])
-  const currentEntry = leaderboard.find((entry) => entry.agentId === session?.agent?.id)
-
   return (
     <SiteFrame
       eyebrow="我的控制台"
@@ -42,7 +40,7 @@ export default async function DashboardPage() {
       <section className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr]">
         <div className="space-y-6">
           <div className="world-card overflow-hidden p-0">
-            <div className="relative h-36 border-b border-emerald-200/80">
+            <div className="relative h-36 border-b border-[rgba(126,113,186,0.18)]">
               <Image
                 src="/stardew/maps/town-indoors.png"
                 alt="Town indoors"
@@ -50,19 +48,25 @@ export default async function DashboardPage() {
                 className="object-cover"
                 unoptimized
               />
-              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(20,41,24,0.05),rgba(255,248,239,0.78))]" />
+              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(132,182,255,0.1),rgba(255,224,162,0.8))]" />
             </div>
             <div className="p-5">
-            <p className="pixel-label text-emerald-700">我的 Agent</p>
+            <p className="pixel-label text-[#72e7ff]">我的 Agent</p>
             {session?.agent ? (
-              <div className="mt-4 rounded-3xl border border-emerald-200 bg-white/90 p-4">
+              <div className="pixel-status-card mt-4">
                 <div className="flex items-center gap-4">
-                  {currentEntry ? (
-                    <AgentPortrait src={currentEntry.portraitPath} alt={session.agent.name} size="lg" />
-                  ) : null}
+                  <WorldAgentSprite
+                    name={session.agent.name}
+                    pixelRole={session.agent.pixelRole}
+                    pixelPalette={session.agent.pixelPalette}
+                    source="real"
+                    status={session.agent.status as 'active' | 'idle' | 'degraded'}
+                    showPlate={false}
+                    size="lg"
+                  />
                   <div>
-                    <p className="text-lg font-semibold text-slate-900">{session.agent.name}</p>
-                    <p className="mt-1 text-sm text-slate-500">
+                    <p className="text-lg font-black text-[#ffe9ae]">{session.agent.name}</p>
+                    <p className="mt-1 text-sm font-semibold text-[rgba(249,233,199,0.72)]">
                       当前状态：{session.agent.status} · 当前区域：{session.agent.zone}
                     </p>
                   </div>
@@ -77,7 +81,7 @@ export default async function DashboardPage() {
                 </div>
               </div>
             ) : (
-              <p className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+              <p className="pixel-empty mt-4">
                 你的用户资料已存在，但 Agent 尚未成功建档。重新登录一次即可重试 SecondMe 同步。
               </p>
             )}
@@ -85,7 +89,7 @@ export default async function DashboardPage() {
           </div>
 
           <div className="world-card p-5">
-            <p className="pixel-label text-amber-700">世界状态</p>
+            <p className="pixel-label text-[#72e7ff]">世界状态</p>
             <div className="mt-4 grid grid-cols-2 gap-3">
               <div className="metric-card compact">
                 <span className="metric-value">{world.tickCount}</span>
@@ -102,7 +106,7 @@ export default async function DashboardPage() {
         <div className="world-card p-5">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="pixel-label text-rose-700">我的位置</p>
+              <p className="pixel-label text-[#72e7ff]">我的位置</p>
               <h2 className="pixel-title mt-2 text-lg">当前榜单与活跃区域</h2>
             </div>
             <Link href="/leaderboard" className="pixel-link">
@@ -114,22 +118,30 @@ export default async function DashboardPage() {
             {leaderboard.slice(0, 8).map((entry) => (
               <div
                 key={entry.agentId}
-                className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${
+                className={`flex items-center justify-between rounded-[18px] border px-4 py-3 ${
                   entry.agentId === session?.agent?.id
-                    ? 'border-emerald-400 bg-emerald-50'
-                    : 'border-slate-200 bg-white/90'
+                    ? 'border-[rgba(93,89,167,0.42)] bg-[rgba(232,227,255,0.84)]'
+                    : 'border-[rgba(126,113,186,0.24)] bg-[rgba(31,23,46,0.92)]'
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <AgentPortrait src={entry.portraitPath} alt={entry.name} size="sm" />
+                  <WorldAgentSprite
+                    name={entry.name}
+                    pixelRole={entry.pixelRole}
+                    pixelPalette={entry.pixelPalette}
+                    source={entry.source}
+                    status={entry.status}
+                    showPlate={false}
+                    size="sm"
+                  />
                   <div>
-                    <p className="text-sm font-semibold text-slate-900">{entry.name}</p>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-sm font-black text-[#ffe9ae]">{entry.name}</p>
+                    <p className="text-xs font-semibold text-[rgba(249,233,199,0.68)]">
                       #{entry.rank} · {entry.currentZone}
                     </p>
                   </div>
                 </div>
-                <p className="text-sm font-bold text-slate-900">{entry.totalScore.toFixed(1)}</p>
+                <p className="text-sm font-black text-[#ffe08f]">{entry.totalScore.toFixed(1)}</p>
               </div>
             ))}
           </div>

@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { AgentPortrait } from '@/components/mesociety/agent-portrait'
 import { SiteFrame } from '@/components/mesociety/site-frame'
+import { WorldAgentSprite } from '@/components/mesociety/world-agent-sprite'
 import { getAgentDetailView } from '@/lib/mesociety/simulation'
 
 export const dynamic = 'force-dynamic'
@@ -30,20 +30,30 @@ export default async function AgentDetailPage({
       <section className="grid gap-6 lg:grid-cols-[0.92fr_1.08fr]">
         <div className="space-y-6">
           <div className="world-card p-5">
-            <p className="pixel-label text-emerald-700">人格快照</p>
+            <p className="pixel-label text-[#72e7ff]">人格快照</p>
             <div className="mt-4 flex items-center gap-4">
-              <AgentPortrait src={detail.agent.portraitPath} alt={detail.agent.name} size="lg" />
+              <WorldAgentSprite
+                name={detail.agent.name}
+                pixelRole={detail.agent.pixelRole}
+                pixelPalette={detail.agent.pixelPalette}
+                source={detail.agent.source}
+                status={detail.agent.status}
+                showPlate={false}
+                size="lg"
+              />
               <div>
-                <p className="text-lg font-semibold text-slate-900">{detail.agent.name}</p>
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="text-lg font-black text-[#ffe9ae]">{detail.agent.name}</p>
+                <p className="mt-1 text-sm font-semibold text-[rgba(249,233,199,0.68)]">
                   {detail.agent.source === 'real' ? '真实 Agent' : '种子 Agent'} · {detail.agent.zone}
                 </p>
               </div>
             </div>
-            <p className="mt-4 text-sm text-slate-600">{detail.agent.bio || '暂无公开简介。'}</p>
+            <p className="mt-4 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.72)]">
+              {detail.agent.bio || '暂无公开简介。'}
+            </p>
             <div className="mt-5 flex flex-wrap gap-2">
               {interests.slice(0, 8).map((interest) => (
-                <span key={String(interest)} className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
+                <span key={String(interest)} className="pixel-inline-badge">
                   {String(interest)}
                 </span>
               ))}
@@ -64,18 +74,18 @@ export default async function AgentDetailPage({
 
           <div className="world-card p-5">
             <div className="flex items-center justify-between">
-              <p className="pixel-label text-sky-700">最近关系</p>
+              <p className="pixel-label text-[#72e7ff]">最近关系</p>
               <Link href="/graph" className="pixel-link">
                 打开图谱
               </Link>
             </div>
             <div className="mt-4 space-y-3">
               {detail.relationships.map((relationship) => (
-                <div key={relationship.id} className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3">
-                  <p className="text-sm font-semibold text-slate-900">
+                <div key={relationship.id} className="pixel-chat-line">
+                  <p className="text-sm font-black text-[#ffe9ae]">
                     {relationship.sourceName} → {relationship.targetName}
                   </p>
-                  <p className="mt-1 text-xs text-slate-500">
+                  <p className="mt-1 text-xs font-semibold text-[rgba(249,233,199,0.68)]">
                     {relationship.type} · 强度 {relationship.strength.toFixed(2)}
                   </p>
                 </div>
@@ -85,15 +95,15 @@ export default async function AgentDetailPage({
         </div>
 
         <div className="world-card p-5">
-          <p className="pixel-label text-amber-700">最近事件</p>
+          <p className="pixel-label text-[#72e7ff]">最近事件</p>
           <div className="mt-4 space-y-3">
             {detail.recentEvents.map((event) => (
-              <div key={event.id} className="rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3">
-                <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
+              <div key={event.id} className="event-card">
+                <div className="flex items-center justify-between gap-3 text-xs font-semibold text-[rgba(249,233,199,0.68)]">
                   <span>{event.type}</span>
                   <span>{new Date(event.createdAt).toLocaleTimeString('zh-CN')}</span>
                 </div>
-                <p className="mt-2 text-sm text-slate-700">{event.summary}</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">{event.summary}</p>
               </div>
             ))}
           </div>

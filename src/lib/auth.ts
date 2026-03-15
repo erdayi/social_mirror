@@ -1,9 +1,10 @@
 import { cookies } from 'next/headers'
+import { cache } from 'react'
 import { prisma } from '@/lib/prisma'
 
 const SESSION_COOKIE = 'mesociety_session'
 
-export async function getCurrentUser() {
+export const getCurrentUser = cache(async () => {
   const sessionId = cookies().get(SESSION_COOKIE)?.value
 
   if (!sessionId) {
@@ -14,7 +15,7 @@ export async function getCurrentUser() {
     where: { id: sessionId },
     include: { agent: true },
   })
-}
+})
 
 export async function getCurrentAgent() {
   const user = await getCurrentUser()
