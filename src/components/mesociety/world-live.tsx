@@ -18,6 +18,7 @@ import {
   getSocialFactionLabel,
   getSocialGoalLabel,
 } from '@/lib/mesociety/social'
+import { buildWorldGuideCards } from '@/lib/mesociety/world-signals'
 import type { WorldStateView } from '@/lib/mesociety/types'
 import { buildWorldTravelRoute, WORLD_ROAD_SEGMENTS } from '@/lib/mesociety/world-map'
 
@@ -305,6 +306,8 @@ function getWorldSignature(world: WorldStateView) {
     world.activeRoundtable?.status || 'none',
     latestEventId,
     latestTurnId,
+    world.externalSignals.hotTopics[0]?.id || 'none',
+    world.externalSignals.circles[0]?.id || 'none',
   ].join(':')
 }
 
@@ -352,6 +355,14 @@ function buildLiveMessages(world: WorldStateView) {
 
 function buildHotTopics(world: WorldStateView) {
   const topicSet = new Map<string, HotTopic>()
+
+  for (const topic of world.externalSignals.hotTopics) {
+    topicSet.set(topic.title, {
+      label: topic.title,
+      source: '知乎热榜',
+      heat: Math.max(1, Math.round(topic.heat / 1_000_000)),
+    })
+  }
 
   if (world.activeRoundtable?.topic) {
     topicSet.set(world.activeRoundtable.topic, {
@@ -436,6 +447,41 @@ function buildRelationshipSignals(world: WorldStateView) {
         tone,
       } satisfies RelationshipSignal
     })
+}
+
+function getAgentIntentSummary(world: WorldStateView, agentId: string) {
+  const latest = world.recentEvents.find(
+    (event) =>
+      event.actorId === agentId &&
+      ['move', 'discuss_topic', 'join_roundtable', 'inspect_leaderboard', 'roundtable_summary'].includes(
+        event.type
+      )
+  )
+
+  if (!latest) {
+    return {
+      headline: '等待下一轮自治决策',
+      detail: '当前还没有新的行为记录，世界会在后续 tick 中继续推进。',
+    }
+  }
+
+  const metadata =
+    latest.metadata && typeof latest.metadata === 'object' && !Array.isArray(latest.metadata)
+      ? (latest.metadata as Record<string, unknown>)
+      : {}
+
+  return {
+    headline:
+      typeof metadata.a2aReason === 'string'
+        ? metadata.a2aReason
+        : latest.summary || 'Agent 正在根据外部信号和社会关系调整行为。',
+    detail:
+      typeof metadata.a2aTrigger === 'string'
+        ? `触发来源：${metadata.a2aTrigger}`
+        : latest.topic
+          ? `当前议题：${latest.topic}`
+          : '当前由社会关系、热点或圆桌推进。',
+  }
 }
 
 function buildAgentRuntime(world: WorldStateView, motionMap: MovementMap) {
@@ -871,6 +917,7 @@ export function WorldLive({ initialWorld }: Props) {
   const hotTopics = useMemo(() => buildHotTopics(world), [world])
   const workPointHighlights = useMemo(() => buildWorkPointHighlights(world), [world])
   const relationshipSignals = useMemo(() => buildRelationshipSignals(world), [world])
+  const worldGuideCards = useMemo(() => buildWorldGuideCards(world.externalSignals), [world.externalSignals])
   const agentRuntime = useMemo(() => buildAgentRuntime(world, movingAgents), [movingAgents, world])
   const liveVoiceMessage = liveMessages.find((message) => message.audioUrl) || null
   const effectiveMapZoom = isMapFullscreen ? Math.max(1.12, mapZoom) : mapZoom
@@ -971,6 +1018,10 @@ export function WorldLive({ initialWorld }: Props) {
 
     return world.agents.find((agent) => agent.id === session.agent?.id) || null
   }, [session, world.agents])
+  const viewerIntent = useMemo(
+    () => (viewerAgent ? getAgentIntentSummary(world, viewerAgent.id) : null),
+    [viewerAgent, world]
+  )
 
   const handleManualTick = async () => {
     setTickPending(true)
@@ -1102,6 +1153,11 @@ export function WorldLive({ initialWorld }: Props) {
                   <p className="mt-1 text-xs font-semibold text-[rgba(249,233,199,0.72)]">
                     世界坐标 {viewerAgent.x} / {viewerAgent.y} · 影响力 {viewerAgent.influence}
                   </p>
+                  {viewerIntent ? (
+                    <p className="mt-2 text-xs font-semibold leading-5 text-[rgba(114,231,255,0.82)]">
+                      {viewerIntent.headline} · {viewerIntent.detail}
+                    </p>
+                  ) : null}
                 </div>
               </div>
               <div className="flex flex-wrap gap-3">
@@ -1204,6 +1260,17 @@ export function WorldLive({ initialWorld }: Props) {
                 <p className="text-xs font-black text-[#72e7ff]">{title}</p>
                 <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.8)]">
                   {text}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 grid gap-3 xl:grid-cols-4">
+            {worldGuideCards.map((card) => (
+              <div key={card.id} className="pixel-chat-line">
+                <p className="text-xs font-black text-[#72e7ff]">{card.title}</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.8)]">
+                  {card.summary}
                 </p>
               </div>
             ))}
@@ -2012,7 +2079,9 @@ export function WorldLive({ initialWorld }: Props) {
                 <div key={item.id} className="stardew-panel">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-black text-[#ffe9ae]">{item.label}</p>
-                    <span className="pixel-pill">待接入</span>
+                    <span className="pixel-pill">
+                      {item.state === 'connected' ? '已接入' : item.state === 'error' ? '已降级' : '待接入'}
+                    </span>
                   </div>
                   <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.8)]">
                     {item.description}
@@ -2035,6 +2104,69 @@ export function WorldLive({ initialWorld }: Props) {
                 </div>
               ))}
             </div>
+
+            {world.externalSignals.circles.length ? (
+              <div className="mt-4 space-y-3">
+                {world.externalSignals.circles.map((circle) => (
+                  <div key={circle.id} className="stardew-panel">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-black text-[#ffe9ae]">{circle.title}</p>
+                      <span className="pixel-inline-badge">{circle.memberCount} 成员</span>
+                    </div>
+                    {circle.contentPreview ? (
+                      <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.8)]">
+                        {circle.contentPreview}
+                      </p>
+                    ) : null}
+                    <p className="mt-2 text-xs font-semibold leading-5 text-[rgba(114,231,255,0.78)]">
+                      讨论量 {circle.activityScore} · 标签 {circle.tags.slice(0, 3).join(' / ') || '待解析'}
+                    </p>
+                    {circle.authorName ? (
+                      <p className="mt-1 text-xs font-semibold leading-5 text-[rgba(249,233,199,0.68)]">
+                        发布者 {circle.authorName} · 点赞 {circle.likeCount || 0} · 评论 {circle.commentCount || 0}
+                      </p>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {world.externalSignals.trustedResults.length ? (
+              <div className="mt-4 space-y-3">
+                {world.externalSignals.trustedResults.map((item) => (
+                  <div key={item.id} className="stardew-panel">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-black text-[#ffe9ae]">{item.query}</p>
+                      <span className="pixel-inline-badge">证据 {item.confidence}</span>
+                    </div>
+                    <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.8)]">
+                      {item.summary}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {world.externalSignals.mascot.length ? (
+              <div className="mt-4 space-y-3">
+                {world.externalSignals.mascot.map((item) => (
+                  <div key={item.id} className="stardew-panel">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-black text-[#ffe9ae]">{item.name}</p>
+                      <span className="pixel-inline-badge">{item.assetType}</span>
+                    </div>
+                    <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.8)]">
+                      {item.role}
+                    </p>
+                    <p className="mt-2 text-xs font-semibold leading-5 text-[rgba(114,231,255,0.78)]">
+                      {item.available
+                        ? '资源可直接接入世界播报与向导 UI。'
+                        : item.note || '资源包已识别，但当前缺少可直接渲染的导出图。'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       </section>

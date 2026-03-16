@@ -1,6 +1,19 @@
 const DEFAULT_SECONDME_API_BASE_URL = 'https://api.mindverse.com/gate/lab'
 const DEFAULT_SECONDME_OAUTH_URL = 'https://go.second.me/oauth/'
 const DEFAULT_APP_URL = 'http://localhost:3000'
+const DEFAULT_ZHIHU_API_BASE_URL = 'https://openapi.zhihu.com'
+
+function getStringArrayEnv(name: string, fallback: string[] = []) {
+  const value = process.env[name]
+  if (!value) {
+    return fallback
+  }
+
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
 
 function getNumberEnv(name: string, fallback: number) {
   const value = process.env[name]
@@ -24,6 +37,17 @@ export const env = {
       process.env.SECONDME_API_BASE_URL || DEFAULT_SECONDME_API_BASE_URL,
     oauthUrl: DEFAULT_SECONDME_OAUTH_URL,
   },
+  zhihu: {
+    appKey: process.env.ZHIHU_APP_KEY || '',
+    appSecret: process.env.ZHIHU_APP_SECRET || '',
+    apiBaseUrl: process.env.ZHIHU_API_BASE_URL || DEFAULT_ZHIHU_API_BASE_URL,
+    ringIds: getStringArrayEnv('ZHIHU_RING_IDS', [
+      '2001009660925334090',
+      '2015023739549529606',
+    ]),
+    publishMode:
+      process.env.ZHIHU_PUBLISH_MODE === 'autonomous' ? 'autonomous' : 'controlled',
+  },
   simulation: {
     tickIntervalMs: getNumberEnv('SIM_TICK_INTERVAL_MS', 20_000),
     minWorldAgentCount: getNumberEnv('MIN_WORLD_AGENT_COUNT', 10),
@@ -38,6 +62,10 @@ export const env = {
 
 export function hasSecondMeCredentials() {
   return Boolean(env.secondMe.clientId && env.secondMe.clientSecret)
+}
+
+export function hasZhihuCredentials() {
+  return Boolean(env.zhihu.appKey && env.zhihu.appSecret)
 }
 
 export function hasNeo4jCredentials() {

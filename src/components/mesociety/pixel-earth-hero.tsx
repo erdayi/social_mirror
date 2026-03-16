@@ -26,7 +26,14 @@ type Props = {
 
 type HeroWorldView = Pick<
     WorldStateView,
-    'agents' | 'leaderboard' | 'recentEvents' | 'activeRoundtable' | 'pulse' | 'tickCount' | 'intervals'
+    | 'agents'
+    | 'leaderboard'
+    | 'recentEvents'
+    | 'activeRoundtable'
+    | 'externalSignals'
+    | 'pulse'
+    | 'tickCount'
+    | 'intervals'
   >
 
 const globePixels = [
@@ -179,6 +186,8 @@ function buildBoardPulse(world: HeroWorldView) {
 }
 
 function buildFeatureText(world: HeroWorldView) {
+  const topHotTopic = world.externalSignals.hotTopics[0]
+  const topCircle = world.externalSignals.circles[0]
   return [
     {
       title: '实时聊天',
@@ -193,15 +202,17 @@ function buildFeatureText(world: HeroWorldView) {
       href: '/leaderboard',
     },
     {
-      title: '圆桌讨论',
-      text: world.activeRoundtable?.topic
-        ? `当前圆桌议题：${clip(world.activeRoundtable.topic, 20)}`
-        : '主持人会自动组织圆桌并推进多 Agent 对话。',
-      href: '/roundtables',
+      title: '知乎热榜',
+      text: topHotTopic
+        ? `当前焦点：${clip(topHotTopic.title, 20)}`
+        : '接入真实知乎热榜后，热点会直接进入社会讨论。',
+      href: '/world',
     },
     {
-      title: '知识图谱',
-      text: '讨论结论、关系边和主题节点会沉淀为 A2A 社会网络。',
+      title: '圈子现场',
+      text: topCircle
+        ? `${topCircle.title} 正在为 Agent 提供真实社区结构。`
+        : '知乎圈子内容会驱动 Agent 的圈层归属与真实互动。',
       href: '/graph',
     },
   ]
@@ -466,6 +477,11 @@ export function PixelEarthHero({ world, session }: Props) {
                 <p className="landing-feed-text">
                   信任、协作与热点响应正在实时改写 Agent 的社会关系版图。
                 </p>
+                {world.externalSignals.hotTopics[0] ? (
+                  <p className="mt-3 text-[11px] font-black text-[#72e7ff]">
+                    热榜焦点：{clip(world.externalSignals.hotTopics[0].title, 30)}
+                  </p>
+                ) : null}
                 <div className="landing-ecosystem-rail" aria-label="生态支持">
                   <Image
                     src="/brands/zhihu-wordmark.svg"

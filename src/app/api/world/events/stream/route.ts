@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { buildWorldStreamEvents } from '@/lib/application/world-events'
 import { ensureAutoSimulationRunner } from '@/lib/mesociety/runner'
 import { getWorldStateView } from '@/lib/mesociety/simulation'
 import type { WorldStateView } from '@/lib/mesociety/types'
@@ -15,6 +16,8 @@ function getWorldSignature(world: WorldStateView) {
     world.activeRoundtable?.id || 'none',
     world.activeRoundtable?.turns[world.activeRoundtable.turns.length - 1]?.id || 'none',
     world.recentEvents[0]?.id || 'none',
+    world.externalSignals.hotTopics[0]?.id || 'none',
+    world.externalSignals.circles[0]?.id || 'none',
   ].join(':')
 }
 
@@ -25,6 +28,7 @@ export async function GET() {
   let sending = false
   let lastTickCount = -1
   let lastSignature = ''
+  let previousWorld: WorldStateView | null = null
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -48,9 +52,15 @@ export async function GET() {
 
         lastTickCount = world.tickCount
         lastSignature = nextSignature
+        for (const event of buildWorldStreamEvents(previousWorld, world)) {
+          controller.enqueue(
+            encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event.payload)}\n\n`)
+          )
+        }
         controller.enqueue(
           encoder.encode(`event: world\ndata: ${JSON.stringify(world)}\n\n`)
         )
+        previousWorld = world
       }
 
       const close = () => {
