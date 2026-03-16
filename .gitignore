@@ -5,6 +5,7 @@ out/
 Stardew valley/
 .env
 .env.*
+!.env.example
 刘看山3d+平面/
 ._*
 *.log
