@@ -3,6 +3,10 @@ node_modules/
 out/
 .secondme/
 Stardew valley/
+.env
+.env.*
+刘看山3d+平面/
+._*
 *.log
 npm-debug.log*
 .DS_Store

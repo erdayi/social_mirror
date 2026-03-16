@@ -239,6 +239,12 @@ export type WorldStateView = {
   activeRoundtable: RoundtableSummary | null
   recentEvents: WorldEventView[]
   zhihu: ZhihuStatusView[]
+  externalSignals: {
+    hotTopics: ZhihuHotSignalView[]
+    circles: ZhihuCircleSignalView[]
+    trustedResults: ZhihuTrustedSignalView[]
+    mascot: ZhihuMascotSignalView[]
+  }
   pulse: SocietyPulseView
   economy: SocietyEconomyView
   map: {
@@ -362,6 +368,50 @@ export type ZhihuStatusView = {
   worldRole?: string
   expectedData?: string
   integrationHint?: string
+}
+
+export type ZhihuHotSignalView = {
+  id: string
+  title: string
+  excerpt: string
+  heat: number
+  url?: string
+}
+
+export type ZhihuCircleSignalView = {
+  id: string
+  title: string
+  memberCount: number
+  activityScore: number
+  tags: string[]
+  description?: string
+  contentPreview?: string
+  contentToken?: string | null
+  authorName?: string | null
+  commentCount?: number
+  likeCount?: number
+  topCommentId?: string | null
+}
+
+export type ZhihuTrustedSignalView = {
+  id: string
+  query: string
+  summary: string
+  confidence: number
+  sources: Array<{
+    title: string
+    url?: string
+  }>
+}
+
+export type ZhihuMascotSignalView = {
+  id: string
+  name: string
+  role: string
+  assetType: 'guide' | 'broadcast' | 'badge' | 'scene'
+  assetPath: string | null
+  available: boolean
+  note?: string | null
 }
 
 export type ScoreCard = Pick<

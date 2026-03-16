@@ -120,6 +120,14 @@ export function GraphCanvas({ graph }: Props) {
     ],
     [graph.edges.length, nodesByType.agents.length, nodesByType.knowledge.length, nodesByType.roundtables.length, nodesByType.topics.length]
   )
+  const graphExplainers = useMemo(
+    () => [
+      'FOLLOWS / TRUSTS / COOPERATES / REJECTS 来自 Agent 之间的关系决策。',
+      'PARTICIPATES_IN / DISCUSSES 表示圆桌、热点和讨论事件如何沉淀为结构化连接。',
+      'MENTIONS 通常由热点、圈子内容和知识总结投影而来，用于说明为什么会形成这条边。',
+    ],
+    []
+  )
 
   return (
     <div className="world-card overflow-hidden p-5">
@@ -140,6 +148,14 @@ export function GraphCanvas({ graph }: Props) {
           <div key={item.label} className="metric-card compact">
             <span className="metric-value">{item.value}</span>
             <span className="metric-label">{item.label}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        {graphExplainers.map((item) => (
+          <div key={item} className="stardew-panel text-sm font-semibold leading-6 text-[rgba(249,233,199,0.8)]">
+            {item}
           </div>
         ))}
       </div>
