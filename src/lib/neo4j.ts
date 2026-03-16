@@ -20,7 +20,7 @@ type Neo4jDriver = {
   session: (options?: { database?: string }) => Neo4jSession
 }
 type Neo4jModule = {
-  driver: (uri: string, authToken: unknown) => Neo4jDriver
+  driver: (uri: string, authToken: unknown, config?: Record<string, unknown>) => Neo4jDriver
   auth: {
     basic: (username: string, password: string) => unknown
   }
@@ -28,6 +28,8 @@ type Neo4jModule = {
 
 let neo4jDriverPromise: Promise<Neo4jModule | null> | null = null
 let neo4jInstance: Neo4jDriver | null = null
+let neo4jFailureReason: string | null = null
+let neo4jFailureUntil = 0
 
 function dynamicImport(moduleName: string) {
   return new Function(
@@ -38,6 +40,20 @@ function dynamicImport(moduleName: string) {
 
 function hasNeo4jConfig() {
   return Boolean(env.neo4j.uri && env.neo4j.username && env.neo4j.password)
+}
+
+function normalizeNeo4jError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+
+  if (message.includes('ECONNREFUSED')) {
+    return '本地 Neo4j 未启动，当前已自动回退到 MySQL 图谱。'
+  }
+
+  if (message.toLowerCase().includes('encryption')) {
+    return 'Neo4j 加密配置不兼容，当前已自动回退到 MySQL 图谱。'
+  }
+
+  return 'Neo4j 当前不可用，已自动回退到 MySQL 图谱。'
 }
 
 async function loadNeo4jDriver() {
@@ -62,6 +78,10 @@ async function getNeo4jInstance() {
     return null
   }
 
+  if (neo4jFailureUntil > Date.now()) {
+    return null
+  }
+
   if (neo4jInstance) {
     return neo4jInstance
   }
@@ -73,7 +93,11 @@ async function getNeo4jInstance() {
 
   neo4jInstance = neo4j.driver(
     env.neo4j.uri,
-    neo4j.auth.basic(env.neo4j.username, env.neo4j.password)
+    neo4j.auth.basic(env.neo4j.username, env.neo4j.password),
+    {
+      encrypted: 'ENCRYPTION_OFF',
+      disableLosslessIntegers: true,
+    }
   )
 
   return neo4jInstance
@@ -107,8 +131,8 @@ async function withNeo4jSession<T>(
     return {
       ok: false,
       value: null,
-      status: 'driver_missing',
-      reason: 'neo4j-driver 未安装，当前仍使用 MySQL 图谱。',
+      status: neo4jFailureReason ? 'error' : 'driver_missing',
+      reason: neo4jFailureReason || 'neo4j-driver 未安装，当前仍使用 MySQL 图谱。',
     }
   }
 
@@ -122,17 +146,22 @@ async function withNeo4jSession<T>(
 
   try {
     const value = await operation(session)
+    neo4jFailureReason = null
+    neo4jFailureUntil = 0
     return {
       ok: true,
       value,
       status: 'connected',
     }
   } catch (error) {
+    neo4jInstance = null
+    neo4jFailureReason = normalizeNeo4jError(error)
+    neo4jFailureUntil = Date.now() + 15_000
     return {
       ok: false,
       value: null,
       status: 'error',
-      reason: error instanceof Error ? error.message : 'Neo4j 操作失败。',
+      reason: neo4jFailureReason,
     }
   } finally {
     await session.close()

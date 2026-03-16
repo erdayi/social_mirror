@@ -102,6 +102,13 @@ type ViewportChunk = {
   row: number
 }
 
+const worldGuideSteps = [
+  ['先看移动', '地图中央看 Agent 沿道路去岗位、榜单区和圆桌区，不再盯所有卡片。'],
+  ['再看榜单', '右下角榜单表示当前社会结果，数值会跟随关系、协作和融入实时变化。'],
+  ['观察圆桌', '当居民进入圆桌区，优先看主持人、发言顺序和观点汇总。'],
+  ['追踪资源', '资源流、联盟分红和街区升级说明社会如何长期运转，而不只是聊天。'],
+] as const
+
 function hashSeed(input: string) {
   let value = 0
   for (let index = 0; index < input.length; index += 1) {
@@ -1189,6 +1196,17 @@ export function WorldLive({ initialWorld }: Props) {
                 这四个入口分别对应社会表达、关系结构、评分反馈和多 Agent 协商，已经形成等待知乎接入的完整闭环。
               </p>
             </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 xl:grid-cols-4">
+            {worldGuideSteps.map(([title, text]) => (
+              <div key={title} className="pixel-chat-line">
+                <p className="text-xs font-black text-[#72e7ff]">{title}</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.8)]">
+                  {text}
+                </p>
+              </div>
+            ))}
           </div>
         </div>
 

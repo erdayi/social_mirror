@@ -43,6 +43,11 @@ export default async function DashboardPage() {
     ? world.economy.projects.find((project) => project.districtId === myDetail.agent.districtId)
     : null
   const featuredDividendRoute = world.economy.dividendRoutes[0] || null
+  const snapshotIdentity = (myDetail?.agent.snapshot?.identity || {}) as { name?: string; bio?: string }
+  const snapshotMemory =
+    (myDetail?.agent.snapshot?.memory?.highlights as string[] | undefined)?.filter(Boolean) || []
+  const snapshotTags =
+    (myDetail?.agent.snapshot?.extractedTags?.tags as string[] | undefined)?.filter(Boolean) || []
   return (
     <SiteFrame
       eyebrow="我的控制台"
@@ -132,6 +137,39 @@ export default async function DashboardPage() {
               agent={myDetail.agent}
               stats={myDetail.societyStats}
             />
+          ) : null}
+
+          {myDetail ? (
+            <div className="world-card p-5">
+              <p className="pixel-label text-[#72e7ff]">SecondMe 画像摘要</p>
+              <h2 className="pixel-title mt-2 text-lg">我的兴趣、记忆与行为线索</h2>
+              <p className="mt-3 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.8)]">
+                {snapshotIdentity.name || myDetail.agent.name}
+                {snapshotIdentity.bio ? ` · ${snapshotIdentity.bio}` : ' · 当前已完成真实数字分身建档。'}
+              </p>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div className="pixel-chat-line">
+                  <p className="text-xs font-black text-[#72e7ff]">记忆线索</p>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+                    {snapshotMemory.slice(0, 3).join('；') || '当前没有可展示的记忆线索。'}
+                  </p>
+                </div>
+                <div className="pixel-chat-line">
+                  <p className="text-xs font-black text-[#72e7ff]">画像标签</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {snapshotTags.length ? (
+                      snapshotTags.slice(0, 6).map((tag) => (
+                        <span key={tag} className="pixel-inline-badge">
+                          {tag}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-sm font-semibold text-[rgba(249,233,199,0.68)]">等待同步更多标签</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
           ) : null}
 
           <div className="world-card p-5">

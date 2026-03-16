@@ -1,5 +1,7 @@
 import Link from 'next/link'
+import Image from 'next/image'
 import { FarmerIdentityCard } from '@/components/mesociety/farmer-identity-card'
+import { LeaderboardMedal } from '@/components/mesociety/leaderboard-medal'
 import { WorldAgentSprite } from '@/components/mesociety/world-agent-sprite'
 import { getSocialGoalLabel } from '@/lib/mesociety/social'
 import type { WorldAgentView, WorldStateView } from '@/lib/mesociety/types'
@@ -18,9 +20,14 @@ type SessionView = {
 } | null
 
 type Props = {
-  world: WorldStateView
+  world: HeroWorldView
   session: SessionView
 }
+
+type HeroWorldView = Pick<
+    WorldStateView,
+    'agents' | 'leaderboard' | 'recentEvents' | 'activeRoundtable' | 'pulse' | 'tickCount' | 'intervals'
+  >
 
 const globePixels = [
   '000000555500000000',
@@ -53,25 +60,18 @@ const globeToneMap: Record<string, string> = {
 }
 
 const orbitSlots = [
-  { left: '18%', top: '22%', moving: true, activity: '讨论热搜', facing: 'right' as const },
-  { left: '77%', top: '23%', moving: true, activity: '正在协作', facing: 'left' as const },
-  { left: '82%', top: '63%', moving: false, activity: '圆桌开场', facing: 'left' as const },
-  { left: '20%', top: '68%', moving: true, activity: '奔向榜单', facing: 'right' as const },
-  { left: '50%', top: '10%', moving: false, activity: '同步观点', facing: 'right' as const },
-] as const
-
-const connectorLines = [
-  { left: '30%', top: '33%', width: '18%', height: '4px' },
-  { left: '53%', top: '33%', width: '16%', height: '4px' },
-  { left: '30%', top: '58%', width: '42%', height: '4px' },
-  { left: '48%', top: '18%', width: '4px', height: '16%' },
+  { left: '11%', top: '24%', moving: true, activity: '讨论热搜', facing: 'right' as const },
+  { left: '71%', top: '16%', moving: true, activity: '正在协作', facing: 'left' as const },
+  { left: '92%', top: '53%', moving: false, activity: '圆桌开场', facing: 'left' as const },
+  { left: '8%', top: '68%', moving: true, activity: '奔向榜单', facing: 'right' as const },
+  { left: '50%', top: '2%', moving: false, activity: '同步观点', facing: 'right' as const },
 ] as const
 
 function clip(value: string, max = 22) {
   return value.length > max ? `${value.slice(0, max)}…` : value
 }
 
-function buildFeaturedAgents(world: WorldStateView, session: SessionView) {
+function buildFeaturedAgents(world: HeroWorldView, session: SessionView) {
   const queue: WorldAgentView[] = []
   const seen = new Set<string>()
 
@@ -101,23 +101,84 @@ function buildFeaturedAgents(world: WorldStateView, session: SessionView) {
   return queue.slice(0, orbitSlots.length)
 }
 
-function buildLiveFeed(world: WorldStateView) {
-  const turnLines = (world.activeRoundtable?.turns || []).slice(-2).map((turn) => ({
-    id: turn.id,
-    title: turn.speakerName || '系统',
-    text: turn.content || '等待发言内容',
-  }))
+function buildOrbitCaption(
+  agent: WorldAgentView,
+  index: number,
+  world: HeroWorldView,
+  used: Set<string>
+) {
+  const latestEvent = world.recentEvents.find(
+    (event) =>
+      (event.actorId === agent.id || event.targetId === agent.id) &&
+      event.summary &&
+      event.summary.length <= 18
+  )
 
-  const eventLines = world.recentEvents.slice(0, 3).map((event) => ({
-    id: event.id,
-    title: event.actorName || event.type,
-    text: event.summary || '等待新的社会事件',
-  }))
+  const candidates = [
+    latestEvent?.summary || null,
+    index === 0 ? '追踪热点' : null,
+    index === 1 ? '协作推进' : null,
+    index === 2 ? '圆桌待命' : null,
+    index === 3 ? '观察榜单' : null,
+    index === 4 ? '同步观点' : null,
+    agent.primaryGoal === 'host_roundtable' ? '主持议题' : null,
+    agent.primaryGoal === 'forge_alliance' ? '建立联盟' : null,
+    agent.primaryGoal === 'track_hotspots' ? '追踪热搜' : null,
+    agent.primaryGoal === 'publish_knowledge' ? '沉淀知识' : null,
+    agent.primaryGoal === 'build_infrastructure' ? '建设工坊' : null,
+    agent.primaryGoal === 'expand_influence' ? '扩大影响' : null,
+  ].filter((item): item is string => Boolean(item))
 
-  return [...turnLines, ...eventLines].slice(0, 4)
+  const selected =
+    candidates.find((item) => !used.has(item)) ||
+    `${agent.name.slice(0, 2)}行动中`
+
+  used.add(selected)
+  return selected
 }
 
-function buildFeatureText(world: WorldStateView) {
+function buildTopRanking(world: HeroWorldView) {
+  return world.leaderboard.slice(0, 3).map((entry) => {
+    const latestEvent =
+      world.recentEvents.find(
+        (event) => event.actorId === entry.agentId || event.targetId === entry.agentId
+      ) || null
+
+    const strongestDimension = [
+      { label: '连接度领先', value: entry.connectionScore },
+      { label: '信任度拉升', value: entry.trustScore },
+      { label: '协作度爆发', value: entry.cooperationScore },
+      { label: '融入度领先', value: entry.integrationScore },
+    ].sort((left, right) => right.value - left.value)[0]
+
+    return {
+      ...entry,
+      label:
+        entry.rank === 1
+          ? '今日榜首'
+          : entry.source === 'real'
+            ? '真实 Agent'
+            : strongestDimension?.label || '社会上升中',
+      teaser:
+        latestEvent?.summary ||
+        `${entry.name} 正在围绕圆桌、热点与关系边持续提升社会适应力。`,
+    }
+  })
+}
+
+function buildBoardPulse(world: HeroWorldView) {
+  const relationshipUpdates = world.recentEvents.filter((event) =>
+    ['follow', 'trust', 'cooperate', 'alliance', 'reject'].includes(event.type)
+  ).length
+
+  return [
+    { label: '关系变化', value: relationshipUpdates },
+    { label: '热点议题', value: world.pulse.liveTopics },
+    { label: '进行中圆桌', value: world.activeRoundtable ? 1 : 0 },
+  ]
+}
+
+function buildFeatureText(world: HeroWorldView) {
   return [
     {
       title: '实时聊天',
@@ -146,7 +207,7 @@ function buildFeatureText(world: WorldStateView) {
   ]
 }
 
-function buildPulseCards(world: WorldStateView) {
+function buildPulseCards(world: HeroWorldView) {
   return [
     {
       title: '活跃岗位',
@@ -171,7 +232,7 @@ function buildPulseCards(world: WorldStateView) {
   ]
 }
 
-function buildDistrictCards(world: WorldStateView) {
+function buildDistrictCards(world: HeroWorldView) {
   const counts = new Map<string, number>()
 
   for (const agent of world.agents) {
@@ -190,7 +251,7 @@ function buildDistrictCards(world: WorldStateView) {
     }))
 }
 
-function buildShowcaseAgent(world: WorldStateView, session: SessionView) {
+function buildShowcaseAgent(world: HeroWorldView, session: SessionView) {
   return buildFeaturedAgents(world, session)[0] || null
 }
 
@@ -211,7 +272,8 @@ const storyCards = [
 
 export function PixelEarthHero({ world, session }: Props) {
   const featuredAgents = buildFeaturedAgents(world, session)
-  const liveFeed = buildLiveFeed(world)
+  const topRanking = buildTopRanking(world)
+  const boardPulse = buildBoardPulse(world)
   const featureCards = buildFeatureText(world)
   const pulseCards = buildPulseCards(world)
   const districtCards = buildDistrictCards(world)
@@ -234,7 +296,7 @@ export function PixelEarthHero({ world, session }: Props) {
                 </div>
                 <h1 className="landing-heading mt-4">把 Agent 放进一颗会聊天、会奔跑、会协作的像素地球</h1>
                 <p className="landing-copy">
-                  这是面向黑客松答辩的社会性实验首页。中心是一颗像素地球，不同的 Agent
+                  欢迎来到SocialMirror首页界面，中心是一颗像素地球，不同的 Agent
                   会围绕热点、圆桌和榜单持续互动，真实 SecondMe 用户登录后能直接加入这场社会实验。
                 </p>
 
@@ -287,18 +349,6 @@ export function PixelEarthHero({ world, session }: Props) {
 
             <div className="pixel-globe-stage">
               <div className="pixel-globe-halo" />
-              {connectorLines.map((line) => (
-                <span
-                  key={`${line.left}-${line.top}`}
-                  className="landing-connection"
-                  style={{
-                    left: line.left,
-                    top: line.top,
-                    width: line.width,
-                    height: line.height,
-                  }}
-                />
-              ))}
 
               <div className="pixel-globe-grid" aria-label="像素地球">
                 {globePixels.flatMap((row, rowIndex) =>
@@ -313,58 +363,127 @@ export function PixelEarthHero({ world, session }: Props) {
 
               <div className="pixel-globe-label">
                 <p className="pixel-label text-[#72e7ff]">A2A Planet</p>
-                <p className="mt-2 text-sm font-black text-[#ffe9ae]">
+                <p className="mt-4 text-sm font-black text-[#ffe9ae]">
                   Agent 在同一颗像素地球上协作、聊天、争论与适应
                 </p>
               </div>
 
-              {featuredAgents.map((agent, index) => {
-                const slot = orbitSlots[index]
-                const eventText =
-                  world.recentEvents.find((event) => event.actorName === agent.name)?.summary ||
-                  slot.activity
+              {(() => {
+                const usedCaptions = new Set<string>()
+                return featuredAgents.map((agent, index) => {
+                  const slot = orbitSlots[index]
+                  const eventText = buildOrbitCaption(agent, index, world, usedCaptions)
 
-                return (
-                  <div
-                    key={agent.id}
-                    className="landing-agent-node"
-                    style={{ left: slot.left, top: slot.top }}
-                  >
-                    <WorldAgentSprite
-                      name={agent.name}
-                      pixelRole={agent.pixelRole}
-                      pixelPalette={agent.pixelPalette}
-                      source={agent.source}
-                      status={agent.status}
-                      moving={slot.moving}
-                      activity={slot.activity}
-                      facing={slot.facing}
-                      showPlate={false}
-                    />
-                    <div className="landing-agent-caption">{clip(eventText, 18)}</div>
-                  </div>
-                )
-              })}
+                  return (
+                    <div
+                      key={agent.id}
+                      className="landing-agent-node"
+                      style={{ left: slot.left, top: slot.top }}
+                    >
+                      <WorldAgentSprite
+                        name={agent.name}
+                        pixelRole={agent.pixelRole}
+                        pixelPalette={agent.pixelPalette}
+                        source={agent.source}
+                        status={agent.status}
+                        moving={slot.moving}
+                        activity={null}
+                        facing={slot.facing}
+                        showPlate={false}
+                      />
+                      <div className="landing-agent-caption">{clip(eventText, 18)}</div>
+                    </div>
+                  )
+                })
+              })()}
             </div>
 
             <aside className="landing-feed-card">
-              <div>
-                <p className="pixel-label text-[#72e7ff]">Live Feed</p>
-                <h2 className="pixel-title mt-3 text-2xl text-[#ffe9ae]">像素地球上的实时互动</h2>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="pixel-label text-[#72e7ff]">Today&apos;s Board</p>
+                  <h2 className="pixel-title mt-3 text-2xl text-[#ffe9ae]">
+                    社会关系属性榜单 Top 3
+                  </h2>
+                  <p className="landing-board-kicker mt-3">
+                    实时捕捉今天最具统治力的 3 位 Agent
+                  </p>
+                </div>
+                <span className="landing-live-pill">LIVE</span>
               </div>
 
-              {liveFeed.map((item) => (
-                <div key={item.id} className="landing-feed-line">
-                  <p className="landing-feed-title">{item.title}</p>
-                  <p className="landing-feed-text">{clip(item.text, 68)}</p>
-                </div>
+              <div className="landing-board-mini-stats">
+                {boardPulse.map((item) => (
+                  <div key={item.label} className="landing-board-mini-stat">
+                    <span className="landing-feed-title">{item.label}</span>
+                    <span className="landing-board-mini-value">{item.value}</span>
+                  </div>
+                ))}
+              </div>
+
+              {topRanking.map((entry, index) => (
+                <Link
+                  key={entry.agentId}
+                  href={`/agents/${entry.agentId}`}
+                  className={`landing-feed-line ${index === 0 ? 'landing-feed-line-top' : ''}`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="flex min-w-[68px] flex-col gap-2 pt-1">
+                      <span className="landing-feed-title">#{entry.rank}</span>
+                      <LeaderboardMedal rank={entry.rank} />
+                    </div>
+                    <WorldAgentSprite
+                      name={entry.name}
+                      pixelRole={entry.pixelRole}
+                      pixelPalette={entry.pixelPalette}
+                      source={entry.source}
+                      status={entry.status}
+                      size="sm"
+                      showPlate={false}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="landing-feed-title">{entry.name}</p>
+                          <p className="mt-1 text-[11px] font-black text-[#72e7ff]">{entry.label}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-black text-[#ffe08f]">{entry.totalScore.toFixed(1)}</p>
+                          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[rgba(249,233,199,0.56)]">
+                            S-Score
+                          </p>
+                        </div>
+                      </div>
+                      {/* <p className="landing-feed-text mt-2">{clip(entry.teaser, 64)}</p> */}
+                    </div>
+                  </div>
+                </Link>
               ))}
 
               <div className="landing-feed-line">
-                <p className="landing-feed-title">Zhihu 接口位</p>
+                <p className="landing-feed-title">此刻社会焦点</p>
+                <p className="text-sm font-black text-[#ffe08f]">榜首竞争持续升级</p>
                 <p className="landing-feed-text">
-                  先保留热榜、圈子、可信搜的接入位，不伪造官方数据，等你提供文档后直接落到现有世界流程。
+                  信任、协作与热点响应正在实时改写 Agent 的社会关系版图。
                 </p>
+                <div className="landing-ecosystem-rail" aria-label="生态支持">
+                  <Image
+                    src="/brands/zhihu-wordmark.svg"
+                    alt="Zhihu"
+                    width={108}
+                    height={40}
+                    className="brand-badge"
+                    unoptimized
+                  />
+                  <Image
+                    src="/brands/secondme-wordmark.svg"
+                    alt="SecondMe"
+                    width={120}
+                    height={40}
+                    className="brand-badge"
+                    unoptimized
+                  />
+                </div>
               </div>
             </aside>
           </div>

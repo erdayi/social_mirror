@@ -30,7 +30,9 @@ export function AgentsDirectory({ agents, leaderboard, zones }: Props) {
   const [source, setSource] = useState<SourceFilter>('all')
   const [zone, setZone] = useState<ZoneFilter>('all')
   const [sort, setSort] = useState<SortMode>('rank')
+  const [page, setPage] = useState(1)
   const searchParams = useSearchParams()
+  const pageSize = 9
 
   useEffect(() => {
     const zoneParam = searchParams.get('zone')
@@ -114,6 +116,21 @@ export function AgentsDirectory({ agents, leaderboard, zones }: Props) {
     return sorted
   }, [agents, leaderboardById, search, source, zone, sort])
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages))
+  }, [totalPages])
+
+  useEffect(() => {
+    setPage(1)
+  }, [search, source, zone, sort])
+
+  const pagedAgents = useMemo(() => {
+    const start = (page - 1) * pageSize
+    return filtered.slice(start, start + pageSize)
+  }, [filtered, page])
+
   return (
     <div className="space-y-6">
       <section className="world-card p-5">
@@ -126,19 +143,19 @@ export function AgentsDirectory({ agents, leaderboard, zones }: Props) {
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="metric-card compact">
+            <div className="metric-card compact text-center">
               <span className="metric-value">{stats.total}</span>
               <span className="metric-label">总数</span>
             </div>
-            <div className="metric-card compact">
+            <div className="metric-card compact text-center">
               <span className="metric-value">{stats.realCount}</span>
               <span className="metric-label">真实</span>
             </div>
-            <div className="metric-card compact">
+            <div className="metric-card compact text-center">
               <span className="metric-value">{stats.seedCount}</span>
               <span className="metric-label">种子</span>
             </div>
-            <div className="metric-card compact">
+            <div className="metric-card compact text-center">
               <span className="metric-value">{stats.degradedCount}</span>
               <span className="metric-label">降级</span>
             </div>
@@ -201,7 +218,7 @@ export function AgentsDirectory({ agents, leaderboard, zones }: Props) {
             <span>位居民满足筛选条件</span>
             <span className="hidden text-[rgba(249,233,199,0.42)] sm:inline">·</span>
             <span className="text-xs font-semibold text-[rgba(249,233,199,0.68)]">
-              默认排序按榜单排名，支持按影响力/名称切换。
+              每页展示 9 位居民，默认按榜单排名排序。
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -220,7 +237,7 @@ export function AgentsDirectory({ agents, leaderboard, zones }: Props) {
       </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {filtered.map((agent) => {
+        {pagedAgents.map((agent) => {
           const entry = leaderboardById.get(agent.id)
           return (
             <Link
@@ -272,6 +289,44 @@ export function AgentsDirectory({ agents, leaderboard, zones }: Props) {
             </Link>
           )
         })}
+      </section>
+
+      <section className="world-card p-5">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <p className="text-sm font-semibold text-[rgba(249,233,199,0.72)]">
+            第 {page} / {totalPages} 页
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={page === 1}
+              className="pixel-nav disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              上一页
+            </button>
+            {Array.from({ length: totalPages }, (_, index) => index + 1)
+              .slice(Math.max(0, page - 3), Math.max(5, page + 2))
+              .map((pageNumber) => (
+                <button
+                  key={pageNumber}
+                  type="button"
+                  onClick={() => setPage(pageNumber)}
+                  className={`pixel-nav min-w-11 ${pageNumber === page ? 'border-[rgba(114,231,255,0.32)] bg-[rgba(20,59,78,0.92)] text-[#72e7ff]' : ''}`}
+                >
+                  {pageNumber}
+                </button>
+              ))}
+            <button
+              type="button"
+              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+              disabled={page === totalPages}
+              className="pixel-nav disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              下一页
+            </button>
+          </div>
+        </div>
       </section>
     </div>
   )
