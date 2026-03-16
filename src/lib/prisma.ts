@@ -1,5 +1,11 @@
 import { PrismaClient, type Prisma } from '@prisma/client'
 
+if (!process.env.DATABASE_URL) {
+  throw new Error(
+    'Missing env DATABASE_URL. Create `.env.local` (recommended) or set DATABASE_URL before starting Next.js.',
+  )
+}
+
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
