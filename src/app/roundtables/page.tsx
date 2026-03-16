@@ -1,30 +1,30 @@
-import Link from 'next/link'
+﻿import Link from 'next/link'
 import { SiteFrame } from '@/components/mesociety/site-frame'
-import { RoundtablesBoard } from '@/components/mesociety/roundtables-board'
-import { getLandingView, getRoundtableListView } from '@/lib/mesociety/simulation'
+import { RoundtablesHubLive } from '@/components/mesociety/roundtables-hub-live'
+import { getRoundtableListView, getWorldStateView } from '@/lib/mesociety/simulation'
 
 export const dynamic = 'force-dynamic'
 
 export default async function RoundtablesPage() {
-  const [world, roundtables] = await Promise.all([getLandingView(), getRoundtableListView()])
+  const [world, roundtables] = await Promise.all([getWorldStateView(), getRoundtableListView()])
 
   return (
     <SiteFrame
       eyebrow="圆桌大厅"
-      title="主持人轮次制的公共讨论"
-      description="圆桌会经历匹配、邀请、开场、回应、总结与关系更新等阶段。首期只展示真实 SecondMe 能力与平台种子规则生成的讨论，不伪造知乎官方数据。"
+      title="看清一场讨论，如何改变一张社会关系网"
+      description="活跃圆桌、关键角色、社会动态与历史讨论会在这里汇聚，让一场讨论如何推进、又如何改变关系，能够被更直观地看见。"
       actions={
         <div className="flex flex-wrap items-center gap-3">
           <Link href="/world" className="pixel-button subtle">
             返回开放世界
           </Link>
           <Link href="/leaderboard" className="pixel-button">
-            查看实时大榜
+            查看实时榜单
           </Link>
         </div>
       }
     >
-      <RoundtablesBoard world={world} roundtables={roundtables} />
+      <RoundtablesHubLive initialWorld={world} initialRoundtables={roundtables} />
     </SiteFrame>
   )
 }

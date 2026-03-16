@@ -7,6 +7,6 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   await ensureAutoSimulationRunner()
   return NextResponse.json({
-    world: await getWorldStateView(),
+    world: await getWorldStateView({ forceFresh: true }),
   })
 }

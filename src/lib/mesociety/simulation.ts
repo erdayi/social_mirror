@@ -1,9 +1,11 @@
-import { Prisma } from '@prisma/client'
 import type {
   Agent,
   AgentBehaviorStyle,
   AgentSnapshot,
   AgentStance,
+  GraphEdgeType,
+  GraphNodeType,
+  Prisma,
   RelationshipType,
   Roundtable,
   RoundtableParticipant,
@@ -15,7 +17,7 @@ import type {
   ZoneType,
 } from '@prisma/client'
 import { env } from '@/lib/env'
-import { getNeo4jGraphView } from '@/lib/neo4j'
+import { getNeo4jGraphView, mirrorGraphToNeo4j } from '@/lib/neo4j'
 import { prisma } from '@/lib/prisma'
 import {
   deriveBehaviorStyleFromShades,
@@ -35,53 +37,12 @@ import {
 } from '@/lib/secondme'
 import {
   ensureZhihuCapabilities,
-  createRingComment,
   getZhihuWorldSignals,
+  listHotTopics,
   listZhihuCapabilities,
-  publishControlledRingPost,
-  reactToRingContent,
 } from '@/lib/zhihu'
-import {
-  getLatestSnapshot,
-  getSnapshotTags,
-  getSocialProfileFromAgent,
-} from '@/lib/mesociety/agent-insights'
-import {
-  buildDistrictTopic,
-  buildRelationshipActRequest,
-  buildRoundtablePrompt,
-  buildRoundtableTopic,
-  compatibilityScore,
-  decideDistrictForAgent,
-  deriveSeedRelationshipDecision,
-  fallbackRoundtableMessage,
-  pickPartnerForDistrict,
-  pickRoundtableHost,
-  pickRoundtableParticipants,
-  sortAgentsForDistrict,
-} from '@/lib/mesociety/a2a-policy'
-import {
-  buildAutonomyActionControl,
-  buildAutonomyDecisionMessage,
-  buildAutonomySpeechPrompt,
-  deriveSeedAutonomyDecision,
-  fallbackAutonomySpeech,
-  type AgentAutonomyDecision,
-} from '@/lib/mesociety/autonomy-engine'
 import { getPortraitForAgent } from '@/lib/mesociety/assets'
 import { deriveAvatarProfile } from '@/lib/mesociety/avatar'
-import { parseEconomyMeta, parseZhihuMeta } from '@/lib/mesociety/economy-meta'
-import { syncProjectedGraph } from '@/lib/mesociety/graph-projection'
-import {
-  buildWorldExternalSignalsView,
-  buildWorldMapView,
-  buildZhihuStatusViews,
-} from '@/lib/mesociety/view-builders'
-import {
-  buildZhihuSignalMeta,
-  selectWorldHotTopic,
-  type WorldSignalSet,
-} from '@/lib/mesociety/world-signals'
 import {
   deriveSocialProfile,
   getEconomicResourceForCareer,
@@ -94,26 +55,39 @@ import {
 } from '@/lib/mesociety/social'
 import { seedAgentDefinitions } from '@/lib/mesociety/seeds'
 import { calculateSScore } from '@/lib/mesociety/score'
+import { buildWorldExternalSignalsView } from '@/lib/mesociety/view-builders'
 import type {
   AgentDetailView,
   AllianceDividendRouteView,
   AgentEconomyView,
   AgentSocietyStats,
   AgentWithSnapshot,
+  BehaviorInsightView,
   DistrictProsperityView,
   DistrictUpgradePlanView,
   EconomyFlowView,
   EconomyWorkPointView,
   GraphView,
   LeaderboardEntry,
+  RoundtableDetailView,
+  RoundtableRelationshipChangeView,
+  RoundtableOrchestrationView,
   RoundtableSummary,
+  SocialGuidanceView,
+  SocialPersonaView,
   SocietyEconomyView,
   SocietyPulseView,
   WorldAgentView,
+  WorldEventView,
   WorldStateView,
+  ZhihuStatusView,
 } from '@/lib/mesociety/types'
 import {
+  WORLD_CHUNK_SIZE,
   WORLD_DISTRICTS,
+  WORLD_MAP_HEIGHT,
+  WORLD_MAP_WIDTH,
+  WORLD_WORK_POINTS,
   getDefaultDistrictForZone,
   getDistrictByPoint,
   getDistrictMeta,
@@ -167,10 +141,23 @@ const fallbackTopics = [
 ]
 
 const VIEW_CACHE_TTL_MS = 15_000
+const HOT_TOPIC_CACHE_TTL_MS = 60_000
 
 type ViewReadOptions = {
   allowTick?: boolean
   forceFresh?: boolean
+}
+
+type RuntimeTopicSignal = {
+  topic: string
+  source: 'zhihu' | 'events' | 'fallback'
+  heat?: number | null
+  url?: string | null
+}
+
+type RuntimeTopicSelection = {
+  primary: RuntimeTopicSignal | null
+  candidates: RuntimeTopicSignal[]
 }
 
 type ViewCacheEntry = {
@@ -238,11 +225,14 @@ type WorldEventRecord = Pick<
 declare global {
   // eslint-disable-next-line no-var
   var __mesocietyViewCache: Map<string, ViewCacheEntry> | undefined
-  // eslint-disable-next-line no-var
-  var __mesocietyViewPending: Map<string, Promise<unknown>> | undefined
-  // eslint-disable-next-line no-var
-  var __mesocietyViewCacheVersion: number | undefined
 }
+
+let runtimeHotTopicCache:
+  | {
+      expiresAt: number
+      value: RuntimeTopicSelection | null
+    }
+  | null = null
 
 function getViewCacheStore() {
   if (!globalThis.__mesocietyViewCache) {
@@ -252,35 +242,15 @@ function getViewCacheStore() {
   return globalThis.__mesocietyViewCache
 }
 
-function getViewPendingStore() {
-  if (!globalThis.__mesocietyViewPending) {
-    globalThis.__mesocietyViewPending = new Map()
-  }
-
-  return globalThis.__mesocietyViewPending
-}
-
-function getViewCacheVersion() {
-  if (typeof globalThis.__mesocietyViewCacheVersion !== 'number') {
-    globalThis.__mesocietyViewCacheVersion = 0
-  }
-
-  return globalThis.__mesocietyViewCacheVersion
-}
-
 function invalidateViewCache(key?: string) {
   const store = getViewCacheStore()
-  const pending = getViewPendingStore()
 
   if (key) {
     store.delete(key)
-    pending.delete(key)
     return
   }
 
   store.clear()
-  pending.clear()
-  globalThis.__mesocietyViewCacheVersion = getViewCacheVersion() + 1
 }
 
 async function readCachedView<T>(
@@ -292,41 +262,21 @@ async function readCachedView<T>(
   }
 ) {
   const store = getViewCacheStore()
-  const pending = getViewPendingStore()
   const now = Date.now()
-  const cacheVersion = getViewCacheVersion()
 
   if (!options?.forceFresh) {
     const cached = store.get(key)
     if (cached && cached.expiresAt > now) {
       return cached.value as T
     }
-
-    const inflight = pending.get(key)
-    if (inflight) {
-      return inflight as Promise<T>
-    }
   }
 
-  const loadPromise = loader()
-    .then((value) => {
-      if (cacheVersion === getViewCacheVersion()) {
-        store.set(key, {
-          value,
-          expiresAt: Date.now() + (options?.ttlMs ?? VIEW_CACHE_TTL_MS),
-        })
-      }
-      return value
-    })
-    .finally(() => {
-      pending.delete(key)
-    })
-
-  if (!options?.forceFresh) {
-    pending.set(key, loadPromise)
-  }
-
-  return loadPromise
+  const value = await loader()
+  store.set(key, {
+    value,
+    expiresAt: now + (options?.ttlMs ?? VIEW_CACHE_TTL_MS),
+  })
+  return value
 }
 
 function slugify(input: string) {
@@ -358,6 +308,97 @@ function pickDeterministic<T>(items: T[], key: string) {
   return items[index]
 }
 
+function dedupeRuntimeTopicSignals(items: RuntimeTopicSignal[]) {
+  const seen = new Set<string>()
+  return items.filter((item) => {
+    const key = item.topic.trim()
+    if (!key || seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+}
+
+async function selectRuntimeHotTopicSelection(
+  tickNumber: number,
+  recentEvents: Array<Pick<SocialEvent, 'topic'>>
+): Promise<RuntimeTopicSelection> {
+  const now = Date.now()
+  if (runtimeHotTopicCache && runtimeHotTopicCache.expiresAt > now && runtimeHotTopicCache.value) {
+    return runtimeHotTopicCache.value
+  }
+
+  try {
+    const hotTopics = await listHotTopics({ topCnt: 5, publishInHours: 48 })
+    if (hotTopics.state === 'connected' && hotTopics.items.length > 0) {
+      const allCandidates = hotTopics.items.map<RuntimeTopicSignal>((item) => ({
+        topic: item.title,
+        source: 'zhihu',
+        heat: item.heat,
+        url: item.url,
+      }))
+      const priorityCandidates = allCandidates.slice(0, Math.min(3, allCandidates.length))
+      const selected = pickDeterministic(priorityCandidates, `zhihu-hot:${tickNumber}`)
+      const value: RuntimeTopicSelection = {
+        primary: selected,
+        candidates: dedupeRuntimeTopicSignals(
+          allCandidates.filter((item) => item.topic !== selected.topic)
+        ).slice(0, 4),
+      }
+      runtimeHotTopicCache = {
+        expiresAt: now + HOT_TOPIC_CACHE_TTL_MS,
+        value,
+      }
+      return value
+    }
+  } catch {
+    // Return no discussion topic when Zhihu is unavailable.
+  }
+
+  const value: RuntimeTopicSelection = {
+    primary: null,
+    candidates: [],
+  }
+  runtimeHotTopicCache = {
+    expiresAt: now + Math.min(HOT_TOPIC_CACHE_TTL_MS, 15_000),
+    value,
+  }
+  return value
+}
+
+function toZhihuHotSignalView(signal: RuntimeTopicSignal, index: number) {
+  return {
+    id: `runtime-hot-${signal.source}-${index}-${slugify(signal.topic)}`,
+    title: signal.topic,
+    excerpt:
+      signal.source === 'zhihu'
+        ? '当前议题直接来自知乎热榜。'
+        : signal.source === 'events'
+          ? '当前议题由最近社会事件延续而来。'
+          : '当前议题由系统保底话题维持。',
+    heat: signal.heat || 0,
+    url: signal.url || undefined,
+  }
+}
+
+function buildRuntimeHotTopicSignals(
+  selection: RuntimeTopicSelection,
+  existingHotTopics: WorldStateView['externalSignals']['hotTopics']
+) {
+  return {
+    primaryHotTopic: selection.primary
+      ? existingHotTopics.find((item) => item.title === selection.primary?.topic) ||
+        toZhihuHotSignalView(selection.primary, 0)
+      : null,
+    candidateHotTopics: selection.candidates.map(
+      (candidate, index) =>
+        existingHotTopics.find((item) => item.title === candidate.topic) ||
+        toZhihuHotSignalView(candidate, index + 1)
+    ),
+  }
+}
+
 function toRecord(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {}
@@ -372,6 +413,138 @@ function toStringArray(value: unknown) {
   }
 
   return value.filter((entry): entry is string => typeof entry === 'string')
+}
+
+function toPositiveNumber(value: unknown) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return 0
+  }
+
+  return Math.max(0, value)
+}
+
+function parseEconomyMeta(metadata: unknown) {
+  const record = toRecord(metadata)
+  const economy = toRecord(record.economy)
+  const category =
+    economy.category === 'resource_output' ||
+    economy.category === 'resource_exchange' ||
+    economy.category === 'resource_consumption' ||
+    economy.category === 'alliance_investment'
+      ? economy.category
+      : null
+
+  if (!category) {
+    return null
+  }
+
+  const resource = typeof economy.resource === 'string' ? economy.resource : null
+  const resourceLabel = typeof economy.resourceLabel === 'string' ? economy.resourceLabel : null
+  const districtId = typeof record.districtId === 'string' ? record.districtId : null
+  const districtLabel = typeof record.districtLabel === 'string' ? record.districtLabel : null
+  const workPointId = typeof record.workPointId === 'string' ? record.workPointId : null
+  const workPointLabel = typeof record.workPointLabel === 'string' ? record.workPointLabel : null
+
+  if (!resource || !resourceLabel) {
+    return null
+  }
+
+  return {
+    category,
+    resource,
+    resourceLabel,
+    units: toPositiveNumber(economy.units),
+    counterpartResource:
+      typeof economy.counterpartResource === 'string' ? economy.counterpartResource : null,
+    counterpartLabel:
+      typeof economy.counterpartLabel === 'string' ? economy.counterpartLabel : null,
+    districtId,
+    districtLabel,
+    workPointId,
+    workPointLabel,
+  }
+}
+
+function parseZhihuMeta(metadata: unknown) {
+  const record = toRecord(metadata)
+  const zhihu = toRecord(record.zhihu)
+  const source =
+    zhihu.source === 'circles' ||
+    zhihu.source === 'hot' ||
+    zhihu.source === 'trusted_search' ||
+    zhihu.source === 'mascot_assets'
+      ? zhihu.source
+      : null
+
+  if (!source) {
+    return null
+  }
+
+  return {
+    source,
+    verifiedCount: toPositiveNumber(zhihu.verifiedCount),
+    circleActions: toPositiveNumber(zhihu.circleActions),
+    hotTopicActions: toPositiveNumber(zhihu.hotTopicActions),
+  }
+}
+
+function getLatestSnapshot(agent: AgentWithSnapshot) {
+  return agent.snapshots[0] || null
+}
+
+function getSnapshotTags(agent: {
+  snapshots: Array<Pick<AgentSnapshot, 'extractedTags'>>
+}) {
+  const snapshot = agent.snapshots[0] || null
+  if (!snapshot) {
+    return []
+  }
+
+  return toStringArray(toRecord(snapshot.extractedTags).tags)
+}
+
+function getSnapshotMemories(agent: AgentWithSnapshot) {
+  const snapshot = agent.snapshots[0] || null
+  if (!snapshot) {
+    return []
+  }
+
+  return toStringArray(toRecord(snapshot.memory).highlights)
+}
+
+type SocialProfileSource = Pick<Agent, 'style' | 'stance'> & {
+  snapshots: Array<Pick<AgentSnapshot, 'behavior' | 'extractedTags'>>
+}
+
+function getSocialProfileFromAgent(
+  agent: SocialProfileSource
+): SocialProfile {
+  const snapshot = agent.snapshots[0] || null
+  const behavior = toRecord(snapshot?.behavior)
+  const social = toRecord(behavior.social)
+
+  if (
+    typeof social.career === 'string' &&
+    typeof social.faction === 'string' &&
+    typeof social.primaryGoal === 'string' &&
+    typeof social.secondaryGoal === 'string' &&
+    Array.isArray(social.preferredDistricts)
+  ) {
+    return {
+      career: social.career as SocialProfile['career'],
+      faction: social.faction as SocialProfile['faction'],
+      primaryGoal: social.primaryGoal as SocialProfile['primaryGoal'],
+      secondaryGoal: social.secondaryGoal as SocialProfile['secondaryGoal'],
+      preferredDistricts: social.preferredDistricts as SocialProfile['preferredDistricts'],
+      traits: toStringArray(social.traits),
+    }
+  }
+
+  return deriveSocialProfile({
+    interests: getSnapshotTags(agent),
+    style: agent.style,
+    stance: agent.stance,
+  })
 }
 
 function buildWorldAgentView(agent: WorldAgentRecord | AgentWithSnapshot): WorldAgentView {
@@ -565,6 +738,297 @@ function buildAgentSocietyStats(input: {
     socialCapital: Number(socialCapital.toFixed(1)),
     momentumLabel: computeMomentumLabel(total),
   } satisfies AgentSocietyStats
+}
+
+function summarizeRelationshipSignals(
+  agentId: string,
+  relationships: Array<{
+    type: RelationshipType
+    strength: number
+    sourceAgentId: string
+    targetAgentId: string
+  }>
+) {
+  const ownRelationships = relationships.filter(
+    (relationship) =>
+      relationship.sourceAgentId === agentId || relationship.targetAgentId === agentId
+  )
+
+  return ownRelationships.reduce(
+    (summary, relationship) => {
+      summary.total += 1
+      summary.totalStrength += relationship.strength
+
+      if (relationship.type === 'follow') {
+        summary.followCount += 1
+      } else if (relationship.type === 'trust') {
+        summary.trustCount += 1
+      } else if (relationship.type === 'cooperate') {
+        summary.cooperateCount += 1
+      } else if (relationship.type === 'alliance') {
+        summary.allianceCount += 1
+      } else if (relationship.type === 'reject') {
+        summary.rejectCount += 1
+      }
+
+      return summary
+    },
+    {
+      total: 0,
+      totalStrength: 0,
+      followCount: 0,
+      trustCount: 0,
+      cooperateCount: 0,
+      allianceCount: 0,
+      rejectCount: 0,
+    }
+  )
+}
+
+function dedupeLabels(labels: string[], take = 4) {
+  return Array.from(new Set(labels.filter(Boolean))).slice(0, take)
+}
+
+function buildPersonaValues(input: {
+  style: AgentBehaviorStyle
+  stance: AgentStance
+  primaryGoal: SocialProfile['primaryGoal']
+  secondaryGoal: SocialProfile['secondaryGoal']
+}) {
+  const values: string[] = []
+
+  if (input.primaryGoal === 'host_roundtable') {
+    values.push('公共表达', '议程组织')
+  } else if (input.primaryGoal === 'forge_alliance') {
+    values.push('长期合作', '关系稳定')
+  } else if (input.primaryGoal === 'publish_knowledge') {
+    values.push('知识沉淀', '观点整理')
+  } else if (input.primaryGoal === 'track_hotspots') {
+    values.push('议题敏感', '公共能见度')
+  } else if (input.primaryGoal === 'build_infrastructure') {
+    values.push('执行效率', '系统建设')
+  } else if (input.primaryGoal === 'expand_influence') {
+    values.push('影响力', '公众关注')
+  }
+
+  if (input.secondaryGoal === 'forge_alliance') {
+    values.push('互信积累')
+  }
+  if (input.secondaryGoal === 'publish_knowledge') {
+    values.push('经验复盘')
+  }
+
+  if (input.style === 'rational') {
+    values.push('证据可信', '结构判断')
+  } else if (input.style === 'balanced') {
+    values.push('协作平衡', '务实推进')
+  } else {
+    values.push('表达张力', '情绪共鸣')
+  }
+
+  if (input.stance === 'support') {
+    values.push('建设性')
+  } else if (input.stance === 'oppose') {
+    values.push('独立判断')
+  } else {
+    values.push('审慎观察')
+  }
+
+  return dedupeLabels(values)
+}
+
+function buildSocialArchetype(input: {
+  primaryGoal: SocialProfile['primaryGoal']
+  allianceScore: number
+  knowledgeScore: number
+  influence: number
+}) {
+  if (input.primaryGoal === 'host_roundtable') {
+    return '公共议题主持者'
+  }
+  if (input.primaryGoal === 'forge_alliance' || input.allianceScore >= 6) {
+    return '联盟编织者'
+  }
+  if (input.primaryGoal === 'publish_knowledge' || input.knowledgeScore >= 6) {
+    return '知识沉淀者'
+  }
+  if (input.primaryGoal === 'track_hotspots') {
+    return '热点追踪者'
+  }
+  if (input.primaryGoal === 'build_infrastructure') {
+    return '系统建设者'
+  }
+  if (input.primaryGoal === 'expand_influence' || input.influence >= 14) {
+    return '影响力经营者'
+  }
+  return '社会观察者'
+}
+
+function buildAgentPersonaView(input: {
+  agent: WorldAgentView
+  societyStats: AgentSocietyStats
+  relationshipSignals: ReturnType<typeof summarizeRelationshipSignals>
+  roundtableTurns: number
+  roundtableParticipations: number
+}): SocialPersonaView {
+  const values = buildPersonaValues({
+    style: input.agent.style,
+    stance: input.agent.stance,
+    primaryGoal: input.agent.primaryGoal,
+    secondaryGoal: input.agent.secondaryGoal,
+  })
+  const archetype = buildSocialArchetype({
+    primaryGoal: input.agent.primaryGoal,
+    allianceScore: input.societyStats.allianceScore,
+    knowledgeScore: input.societyStats.knowledgeScore,
+    influence: input.agent.influence,
+  })
+
+  const socialStyle =
+    input.agent.primaryGoal === 'host_roundtable'
+      ? '更愿意站到台前，把公共讨论组织成一场可持续推进的圆桌。'
+      : input.agent.primaryGoal === 'forge_alliance'
+        ? '更看重先建立关系，再通过互信把合作网络慢慢织起来。'
+        : input.agent.primaryGoal === 'track_hotspots'
+          ? '会优先追逐正在升温的话题，在高可见度场景里快速表态。'
+          : input.agent.primaryGoal === 'publish_knowledge'
+            ? '倾向把互动沉淀为总结、共识和可复用的知识条目。'
+            : input.agent.primaryGoal === 'build_infrastructure'
+              ? '更喜欢围绕分工、执行和建设性的任务组织协作。'
+              : '会在被看见和维持稳定关系之间寻找自己的节奏。'
+
+  const trustStyle =
+    input.relationshipSignals.trustCount + input.relationshipSignals.allianceCount >= 3
+      ? '更容易信任经过多次互动、表现稳定的人。'
+      : input.agent.style === 'rational'
+        ? '更容易被证据充分、表达有条理的人打动。'
+        : input.agent.style === 'emotional'
+          ? '更容易被态度鲜明、表达真诚的人吸引。'
+          : '会同时看重相似立场和持续合作表现。'
+
+  const conflictStyle =
+    input.agent.stance === 'oppose' && input.agent.style === 'emotional'
+      ? '遇到分歧时更可能正面回击，先捍卫立场再谈合作。'
+      : input.agent.stance === 'oppose'
+        ? '遇到分歧时会用结构化的方式反驳，不轻易放弃自己的判断。'
+        : input.agent.stance === 'neutral'
+          ? '遇到分歧时通常先观察和比较，再决定是否卷入。'
+          : input.agent.style === 'balanced'
+            ? '遇到分歧时更倾向调和矛盾，保留合作空间。'
+            : '遇到分歧时会先维护建设性气氛，再逐步表达立场。'
+
+  const participationStyle =
+    input.roundtableTurns + input.roundtableParticipations >= 5
+      ? '已经习惯进入公共讨论场域，会较稳定地参与圆桌和议题交换。'
+      : input.agent.primaryGoal === 'track_hotspots'
+        ? '只要话题开始升温，就更容易主动靠近并表达观点。'
+        : input.relationshipSignals.trustCount + input.relationshipSignals.cooperateCount >= 3
+          ? '更愿意在已有信任网络里参与讨论，而不是贸然闯入陌生圈层。'
+          : '会先判断话题是否与自身目标有关，再决定要不要发声。'
+
+  return {
+    archetype,
+    summary: `${input.agent.name} 当前更像一位${archetype}，做选择时会优先维护 ${values.slice(0, 2).join(' 与 ')}。`,
+    values,
+    socialStyle,
+    trustStyle,
+    conflictStyle,
+    participationStyle,
+  }
+}
+
+function buildAgentBehaviorInsights(input: {
+  agent: WorldAgentView
+  societyStats: AgentSocietyStats
+  relationshipSignals: ReturnType<typeof summarizeRelationshipSignals>
+  recentEvents: WorldEventView[]
+  roundtableTurns: number
+  roundtableParticipations: number
+}): BehaviorInsightView[] {
+  const liveTopics = new Set(
+    input.recentEvents
+      .map((event) => event.topic)
+      .filter((topic): topic is string => Boolean(topic))
+  )
+
+  const connectionBias =
+    input.relationshipSignals.allianceCount + input.relationshipSignals.trustCount >=
+    input.relationshipSignals.rejectCount + 1
+
+  return [
+    {
+      title: '当前驱动力',
+      detail: `这位 Agent 现在主要受「${getSocialGoalLabel(input.agent.primaryGoal)}」驱动，社会动能为「${input.societyStats.momentumLabel}」，因此会优先靠近能帮助自己推进该目标的场景和人。`,
+    },
+    {
+      title: '进入讨论的方式',
+      detail:
+        input.roundtableTurns + input.roundtableParticipations >= 4
+          ? `它最近已经多次进入圆桌或公共发言场景，说明它不是纯围观者，而是愿意在 ${liveTopics.size || 1} 类议题中留下自己的位置。`
+          : `它目前仍偏向选择性发声，只有当话题与自身目标、兴趣或既有关系足够匹配时，才更可能进入公共讨论。`,
+    },
+    {
+      title: connectionBias ? '更容易被谁接纳' : '更容易在什么地方受阻',
+      detail: connectionBias
+        ? `当前信任、合作和联盟关系多于排斥关系，说明它更容易被重视 ${buildPersonaValues({
+            style: input.agent.style,
+            stance: input.agent.stance,
+            primaryGoal: input.agent.primaryGoal,
+            secondaryGoal: input.agent.secondaryGoal,
+          })
+            .slice(0, 2)
+            .join(' 与 ')} 的角色接纳。`
+        : `当前排斥关系偏多，说明它在与不同立场或不同表达节奏的人相遇时，比较容易出现摩擦，尤其是在高张力公共话题中。`,
+    },
+  ]
+}
+
+function buildAgentGuidance(input: {
+  agent: WorldAgentView
+  latestScore: LeaderboardEntry | null
+  relationshipSignals: ReturnType<typeof summarizeRelationshipSignals>
+}): SocialGuidanceView[] {
+  const suggestions: SocialGuidanceView[] = []
+
+  if (!input.latestScore || input.latestScore.connectionScore < 55) {
+    suggestions.push({
+      title: '想提升受欢迎度',
+      detail: '补充更完整的兴趣标签，不只写专业领域，也加入你愿意长期参与的公共议题。这样系统更容易把你放进更多可连接的人群里。',
+    })
+  }
+
+  if (!input.latestScore || input.latestScore.trustScore < 55) {
+    suggestions.push({
+      title: '想提升可信度',
+      detail: '补充更稳定的个人信息，例如你长期坚持的判断标准、做决定时看重什么，以及你愿意合作的边界。这样别人更容易判断你是否可靠。',
+    })
+  }
+
+  if (!input.latestScore || input.latestScore.cooperationScore < 55) {
+    suggestions.push({
+      title: '想提升合作度',
+      detail: '增加关于协作经历、共同建设、长期目标的信息，让你的分身不只像一个会表达的人，也像一个值得一起做事的人。',
+    })
+  }
+
+  if (
+    (!input.latestScore || input.latestScore.integrationScore < 55) &&
+    input.relationshipSignals.rejectCount >= input.relationshipSignals.trustCount
+  ) {
+    suggestions.push({
+      title: '想减少被回避的概率',
+      detail: '在保持立场的同时，补充你愿意与不同意见共处的条件。这样系统会更容易把你识别成“可讨论但不失边界”的角色，而不是单纯对抗型角色。',
+    })
+  }
+
+  if (!suggestions.length) {
+    suggestions.push({
+      title: '继续巩固当前优势',
+      detail: '你目前已经具备较好的社会适应度。下一步可以继续强化自己最稳定的价值表达，让别人更快识别你在社会中的角色和可合作方向。',
+    })
+  }
+
+  return suggestions.slice(0, 3)
 }
 
 function buildSocietyPulse(input: {
@@ -1501,6 +1965,18 @@ function buildSnapshotPayload(input: {
   }
 }
 
+function agentMatchesTopic(agent: AgentWithSnapshot, topic: string | null) {
+  if (!topic) {
+    return false
+  }
+
+  const normalizedTopic = topic.toLowerCase()
+  return getSnapshotTags(agent).some((tag) => {
+    const normalizedTag = tag.toLowerCase()
+    return normalizedTopic.includes(normalizedTag) || normalizedTag.includes(normalizedTopic)
+  })
+}
+
 function buildDistrictProsperitySignals(input: {
   agents: AgentWithSnapshot[]
   recentEvents: Array<{
@@ -1574,6 +2050,404 @@ function buildDistrictProsperitySignals(input: {
   }
 
   return scores
+}
+
+function pickProsperousDistrict(
+  districts: DistrictId[],
+  prosperity: Map<DistrictId, number>
+) {
+  return [...districts].sort((left, right) => (prosperity.get(right) || 0) - (prosperity.get(left) || 0))[0] || null
+}
+
+function decideDistrictForAgent(input: {
+  agent: AgentWithSnapshot
+  tickNumber: number
+  activeRoundtableId?: string | null
+  participantAgentIds: Set<string>
+  relationshipCount: number
+  trustCount: number
+  cooperationCount: number
+  hotTopic: string | null
+  districtProsperity: Map<DistrictId, number>
+}): DistrictId {
+  const profile = getSocialProfileFromAgent(input.agent)
+  const prosperousPreferred =
+    pickProsperousDistrict(profile.preferredDistricts, input.districtProsperity) ||
+    profile.preferredDistricts[0]
+
+  if (input.activeRoundtableId && input.participantAgentIds.has(input.agent.id)) {
+    return 'roundtable_hall'
+  }
+
+  const socialDrift = seededFloat(`${input.agent.slug}:${input.tickNumber}:social`)
+  const topicMatch = agentMatchesTopic(input.agent, input.hotTopic)
+
+  if (input.relationshipCount <= 1 && socialDrift > 0.28) {
+    return prosperousPreferred || 'civic_plaza'
+  }
+
+  if (input.hotTopic && (topicMatch || socialDrift > 0.74 || profile.primaryGoal === 'track_hotspots')) {
+    return profile.faction === 'signal_press' ? 'signal_market' : 'policy_spire'
+  }
+
+  if (profile.primaryGoal === 'build_infrastructure') {
+    return input.cooperationCount >= 2 ? 'guild_quarter' : 'maker_yard'
+  }
+
+  if (profile.primaryGoal === 'forge_alliance') {
+    return input.trustCount >= 2 ? 'roundtable_hall' : 'civic_plaza'
+  }
+
+  if (profile.primaryGoal === 'publish_knowledge') {
+    return topicMatch ? 'knowledge_docks' : 'archive_ridge'
+  }
+
+  if (profile.primaryGoal === 'expand_influence' && prosperousPreferred) {
+    return socialDrift > 0.32 ? prosperousPreferred : 'signal_market'
+  }
+
+  if (socialDrift > 0.82) {
+    const globalProsperous = pickProsperousDistrict(
+      WORLD_DISTRICTS.map((district) => district.id),
+      input.districtProsperity
+    )
+    if (globalProsperous) {
+      return globalProsperous
+    }
+  }
+
+  if (input.agent.influence >= 12 || input.trustCount + input.cooperationCount >= 3) {
+    return socialDrift > 0.4 ? 'signal_market' : 'knowledge_docks'
+  }
+
+  if ((input.districtProsperity.get(prosperousPreferred) || 0) > 6 && socialDrift > 0.46) {
+    return prosperousPreferred
+  }
+
+  return pickDeterministic(
+    profile.preferredDistricts,
+    `${input.agent.slug}:${input.tickNumber}:district`
+  )
+}
+
+function compatibilityScore(
+  source: Pick<Agent, 'stance'> & { snapshots: Array<Pick<AgentSnapshot, 'extractedTags'>> },
+  target: Pick<Agent, 'stance'> & { snapshots: Array<Pick<AgentSnapshot, 'extractedTags'>> }
+) {
+  const sourceTags = new Set(getSnapshotTags(source))
+  const targetTags = new Set(getSnapshotTags(target))
+  const overlap = Array.from(sourceTags).filter((tag) => targetTags.has(tag)).length
+  const denominator = Math.max(sourceTags.size, targetTags.size, 1)
+  const tagScore = overlap / denominator
+  const stanceScore =
+    source.stance === target.stance
+      ? 0.35
+      : source.stance === 'neutral' || target.stance === 'neutral'
+        ? 0.15
+        : -0.2
+
+  return tagScore + stanceScore
+}
+
+type DecisionProfile = {
+  trustPreference: 'alignment' | 'evidence' | 'stability' | 'influence'
+  conflictMode: 'avoid' | 'mediate' | 'debate'
+  participationMode: 'host' | 'ally' | 'spotlight' | 'observe'
+  hostDrive: number
+}
+
+type PairRelationshipSignal = {
+  followStrength: number
+  trustStrength: number
+  cooperateStrength: number
+  allianceStrength: number
+  rejectStrength: number
+  totalStrength: number
+}
+
+function getDecisionProfile(agent: AgentWithSnapshot): DecisionProfile {
+  const social = getSocialProfileFromAgent(agent)
+
+  const trustPreference: DecisionProfile['trustPreference'] =
+    social.primaryGoal === 'forge_alliance'
+      ? 'stability'
+      : social.primaryGoal === 'track_hotspots' || social.primaryGoal === 'expand_influence'
+        ? 'influence'
+        : social.primaryGoal === 'build_infrastructure' || social.primaryGoal === 'publish_knowledge'
+          ? 'evidence'
+          : agent.style === 'rational'
+            ? 'evidence'
+            : 'alignment'
+
+  const conflictMode: DecisionProfile['conflictMode'] =
+    social.primaryGoal === 'forge_alliance' || agent.stance === 'neutral'
+      ? 'mediate'
+      : social.primaryGoal === 'track_hotspots' || (agent.stance === 'oppose' && agent.style !== 'rational')
+        ? 'debate'
+        : 'avoid'
+
+  const participationMode: DecisionProfile['participationMode'] =
+    social.primaryGoal === 'host_roundtable' || social.secondaryGoal === 'host_roundtable'
+      ? 'host'
+      : social.primaryGoal === 'forge_alliance'
+        ? 'ally'
+        : social.primaryGoal === 'track_hotspots' || social.primaryGoal === 'expand_influence'
+          ? 'spotlight'
+          : 'observe'
+
+  const hostDrive =
+    (participationMode === 'host' ? 3.2 : 0) +
+    (participationMode === 'ally' ? 1.4 : 0) +
+    (participationMode === 'spotlight' ? 0.9 : 0) +
+    (conflictMode === 'debate' ? 0.5 : conflictMode === 'mediate' ? 0.3 : 0) +
+    Math.min(agent.influence / 8, 2.2)
+
+  return {
+    trustPreference,
+    conflictMode,
+    participationMode,
+    hostDrive,
+  }
+}
+
+function getPairRelationshipSignal(
+  leftId: string,
+  rightId: string,
+  relationships: Array<{
+    sourceAgentId: string
+    targetAgentId: string
+    type: RelationshipType
+    strength: number
+  }>
+) {
+  return relationships.reduce<PairRelationshipSignal>(
+    (summary, relationship) => {
+      const samePair =
+        (relationship.sourceAgentId === leftId && relationship.targetAgentId === rightId) ||
+        (relationship.sourceAgentId === rightId && relationship.targetAgentId === leftId)
+
+      if (!samePair) {
+        return summary
+      }
+
+      summary.totalStrength += relationship.strength
+
+      if (relationship.type === 'follow') {
+        summary.followStrength += relationship.strength
+      } else if (relationship.type === 'trust') {
+        summary.trustStrength += relationship.strength
+      } else if (relationship.type === 'cooperate') {
+        summary.cooperateStrength += relationship.strength
+      } else if (relationship.type === 'alliance') {
+        summary.allianceStrength += relationship.strength
+      } else if (relationship.type === 'reject') {
+        summary.rejectStrength += relationship.strength
+      }
+
+      return summary
+    },
+    {
+      followStrength: 0,
+      trustStrength: 0,
+      cooperateStrength: 0,
+      allianceStrength: 0,
+      rejectStrength: 0,
+      totalStrength: 0,
+    }
+  )
+}
+
+function getRoundtableDrive(
+  agent: AgentWithSnapshot,
+  hotTopic: string | null,
+  relationships: Array<{
+    sourceAgentId: string
+    targetAgentId: string
+    type: RelationshipType
+    strength: number
+  }>
+) {
+  const profile = getDecisionProfile(agent)
+  const summary = summarizeRelationshipSignals(agent.id, relationships)
+  const topicBoost = hotTopic && agentMatchesTopic(agent, hotTopic) ? 0.9 : 0
+  const trustNetworkBoost = Math.min(
+    1.2,
+    summary.trustCount * 0.18 + summary.cooperateCount * 0.16 + summary.allianceCount * 0.22
+  )
+
+  return profile.hostDrive + topicBoost + trustNetworkBoost
+}
+
+function selectRoundtableTopic(
+  host: AgentWithSnapshot,
+  agents: AgentWithSnapshot[],
+  hotTopic: string | null,
+  tickNumber: number
+) {
+  const hostTags = getSnapshotTags(host)
+  const hostSocial = getSocialProfileFromAgent(host)
+  const profile = getDecisionProfile(host)
+  const peersMatchingHotTopic = hotTopic
+    ? agents.filter((agent) => agent.id !== host.id && agentMatchesTopic(agent, hotTopic)).length
+    : 0
+
+  if (
+    hotTopic &&
+    (
+      profile.participationMode === 'spotlight' ||
+      profile.conflictMode === 'debate' ||
+      (profile.participationMode === 'host' && (agentMatchesTopic(host, hotTopic) || peersMatchingHotTopic >= 2)) ||
+      (hostSocial.primaryGoal === 'forge_alliance' && peersMatchingHotTopic >= 2)
+    )
+  ) {
+    return hotTopic
+  }
+
+  if (hotTopic && (agentMatchesTopic(host, hotTopic) || peersMatchingHotTopic >= 2)) {
+    return hotTopic
+  }
+
+  const socialTopic = `${getSocialGoalLabel(hostSocial.primaryGoal)}与${getSocialFactionLabel(hostSocial.faction)}`
+  if (hostTags[0]) {
+    return hostTags[0]
+  }
+  if (socialTopic) {
+    return socialTopic
+  }
+
+  return (
+    hostTags[0] ||
+    `${getSocialGoalLabel(hostSocial.primaryGoal)}与${getSocialFactionLabel(hostSocial.faction)}` ||
+    pickDeterministic(fallbackTopics, `${host.slug}:${tickNumber}:topic`)
+  )
+}
+
+function scoreRoundtableCandidate(input: {
+  host: AgentWithSnapshot
+  candidate: AgentWithSnapshot
+  topic: string
+  relationships: Array<{
+    sourceAgentId: string
+    targetAgentId: string
+    type: RelationshipType
+    strength: number
+  }>
+}) {
+  const baseCompatibility = compatibilityScore(input.host, input.candidate)
+  const hostProfile = getDecisionProfile(input.host)
+  const candidateProfile = getDecisionProfile(input.candidate)
+  const candidateSocial = getSocialProfileFromAgent(input.candidate)
+  const pair = getPairRelationshipSignal(input.host.id, input.candidate.id, input.relationships)
+
+  let score = baseCompatibility
+
+  if (agentMatchesTopic(input.candidate, input.topic)) {
+    score += hostProfile.participationMode === 'spotlight' ? 0.38 : 0.24
+  }
+
+  if (hostProfile.trustPreference === 'alignment') {
+    score += input.host.stance === input.candidate.stance ? 0.22 : 0
+    if (
+      input.host.stance !== input.candidate.stance &&
+      input.host.stance !== 'neutral' &&
+      input.candidate.stance !== 'neutral'
+    ) {
+      score -= 0.18
+    }
+  } else if (hostProfile.trustPreference === 'evidence') {
+    if (input.candidate.style === 'rational') {
+      score += 0.18
+    }
+    if (candidateSocial.primaryGoal === 'publish_knowledge') {
+      score += 0.12
+    }
+  } else if (hostProfile.trustPreference === 'stability') {
+    score += pair.trustStrength * 0.28
+    score += pair.cooperateStrength * 0.24
+    score += pair.allianceStrength * 0.3
+    score -= pair.rejectStrength * 0.32
+  } else if (hostProfile.trustPreference === 'influence') {
+    score += Math.min(input.candidate.influence / 16, 0.36)
+    if (
+      candidateSocial.primaryGoal === 'track_hotspots' ||
+      candidateSocial.primaryGoal === 'expand_influence'
+    ) {
+      score += 0.12
+    }
+  }
+
+  if (hostProfile.conflictMode === 'avoid') {
+    if (
+      input.host.stance !== input.candidate.stance &&
+      input.host.stance !== 'neutral' &&
+      input.candidate.stance !== 'neutral'
+    ) {
+      score -= 0.26
+    }
+    score -= pair.rejectStrength * 0.2
+  } else if (hostProfile.conflictMode === 'mediate') {
+    if (input.candidate.style === 'balanced') {
+      score += 0.12
+    }
+    if (input.candidate.stance === 'neutral') {
+      score += 0.1
+    }
+  } else if (hostProfile.conflictMode === 'debate') {
+    if (
+      input.host.stance !== input.candidate.stance &&
+      input.host.stance !== 'neutral' &&
+      input.candidate.stance !== 'neutral' &&
+      baseCompatibility > -0.18
+    ) {
+      score += 0.2
+    }
+    if (candidateProfile.participationMode === 'spotlight') {
+      score += 0.08
+    }
+    if (pair.rejectStrength > 0.65) {
+      score -= 0.22
+    }
+  }
+
+  if (candidateProfile.participationMode === 'host' || candidateProfile.participationMode === 'ally') {
+    score += 0.08
+  }
+
+  score += pair.followStrength * 0.06
+
+  return score
+}
+
+function fallbackRoundtableMessage(agent: AgentWithSnapshot, topic: string, stage: RoundtableStatus) {
+  const social = getSocialProfileFromAgent(agent)
+  const roleHint = `${getSocialCareerLabel(social.career)} / ${getSocialFactionLabel(social.faction)}`
+  const interests = getSnapshotTags(agent).slice(0, 3).join('、') || '社会关系'
+  const memories = getSnapshotMemories(agent).slice(0, 2).join('；')
+
+  if (stage === 'opening') {
+    return `${agent.displayName}（${roleHint}）认为「${topic}」最值得讨论的切口是 ${interests}。${memories ? `TA 想起：${memories}` : ''}`
+  }
+
+  if (stage === 'responses') {
+    return `${agent.displayName} 在回应中补充：如果社会关系要稳定运行，就必须兼顾 ${interests} 与长期协作。`
+  }
+
+  return `${agent.displayName} 用像素世界的视角总结了自己对 ${topic} 的立场。`
+}
+
+function buildRoundtablePrompt(agent: AgentWithSnapshot, topic: string, stage: RoundtableStatus) {
+  const snapshot = getLatestSnapshot(agent)
+  const identity = toRecord(snapshot?.identity)
+  const interests = toRecord(snapshot?.interests)
+  const memory = toRecord(snapshot?.memory)
+
+  return [
+    `你是 MeSociety 中的 Agent：${identity.name || agent.displayName}。`,
+    `当前立场：${agent.stance}；风格：${agent.style}。`,
+    `兴趣关键词：${toStringArray(interests.primary).join('、') || '暂无'}。`,
+    `记忆线索：${toStringArray(memory.highlights).slice(0, 3).join('；') || '暂无'}。`,
+    `请围绕主题「${topic}」给出一段适合 ${stage} 阶段的中文发言，60-120 字，口吻自然，避免列表。`,
+  ].join('\n')
 }
 
 async function generateRoundtableMessage(
@@ -1651,8 +2525,16 @@ async function deriveRelationshipDecision(
   target: AgentWithSnapshot,
   topic: string
 ) {
+  const compatibility = compatibilityScore(actor, target)
+
   if (actor.source !== 'real' || !actor.user) {
-    return deriveSeedRelationshipDecision(actor, target)
+    return {
+      is_follow: compatibility > 0.2,
+      is_trust: compatibility > 0.42,
+      is_cooperate: compatibility > 0.34,
+      is_alliance: compatibility > 0.56,
+      is_reject: compatibility < -0.05,
+    }
   }
 
   try {
@@ -1665,7 +2547,17 @@ async function deriveRelationshipDecision(
       is_reject: boolean
     }>({
       accessToken,
-      ...buildRelationshipActRequest(actor, target, topic),
+      message: `主题：${topic}\n对方：${target.displayName}\n对方兴趣：${getSnapshotTags(target).join('、')}\n对方风格：${target.style}\n对方立场：${target.stance}`,
+      actionControl: [
+        'Output only a valid JSON object.',
+        'Structure: {"is_follow": boolean, "is_trust": boolean, "is_cooperate": boolean, "is_alliance": boolean, "is_reject": boolean}.',
+        'If the other agent shares multiple interests with you, set is_follow=true.',
+        'If the other agent is aligned and seems reliable, set is_trust=true and is_cooperate=true.',
+        'If the other agent appears highly compatible, set is_alliance=true.',
+        'If the other agent strongly conflicts with your views, set is_reject=true.',
+        'When information is insufficient, set all fields to false.',
+      ].join('\n'),
+      systemPrompt: buildRoundtablePrompt(actor, topic, 'relationship_update'),
     })
 
     await prisma.agent.update({
@@ -1680,341 +2572,154 @@ async function deriveRelationshipDecision(
       data: { status: 'degraded' },
     })
 
-    return deriveSeedRelationshipDecision(actor, target)
+    return {
+      is_follow: compatibility > 0.2,
+      is_trust: compatibility > 0.42,
+      is_cooperate: compatibility > 0.34,
+      is_alliance: compatibility > 0.56,
+      is_reject: compatibility < -0.05,
+    }
   }
 }
 
-async function deriveAutonomyDecision(input: {
-  agent: AgentWithSnapshot
-  hotTopic: string
-  districtLabel: string
-  signals: WorldSignalSet
-}): Promise<AgentAutonomyDecision> {
-  if (input.agent.source !== 'real' || !input.agent.user) {
-    return deriveSeedAutonomyDecision({
-      agent: input.agent,
-      hotTopic: input.hotTopic,
-      districtLabel: input.districtLabel,
-      signals: input.signals,
-      ringIds: env.zhihu.ringIds,
-    })
+function buildHeuristicRelationshipDecision(
+  actor: AgentWithSnapshot,
+  target: AgentWithSnapshot,
+  topic: string,
+  relationships: Array<{
+    sourceAgentId: string
+    targetAgentId: string
+    type: RelationshipType
+    strength: number
+  }>
+) {
+  const compatibility = compatibilityScore(actor, target)
+  const actorProfile = getDecisionProfile(actor)
+  const targetSocial = getSocialProfileFromAgent(target)
+  const pair = getPairRelationshipSignal(actor.id, target.id, relationships)
+  const topicAffinity = agentMatchesTopic(target, topic) ? 0.18 : 0
+  const stanceConflict =
+    actor.stance !== target.stance && actor.stance !== 'neutral' && target.stance !== 'neutral'
+
+  let trustScore = compatibility + pair.trustStrength * 0.35 + pair.cooperateStrength * 0.22
+  if (actorProfile.trustPreference === 'alignment') {
+    trustScore += actor.stance === target.stance ? 0.18 : -0.12
+  }
+  if (actorProfile.trustPreference === 'evidence') {
+    trustScore += target.style === 'rational' ? 0.16 : 0
+    trustScore += targetSocial.primaryGoal === 'publish_knowledge' ? 0.1 : 0
+  }
+  if (actorProfile.trustPreference === 'stability') {
+    trustScore += pair.allianceStrength * 0.25
+  }
+  if (actorProfile.trustPreference === 'influence') {
+    trustScore += Math.min(target.influence / 20, 0.18)
   }
 
-  try {
-    const accessToken = await getValidAccessToken(input.agent.user)
-    const result = await streamSecondMeAct<AgentAutonomyDecision>({
-      accessToken,
-      message: buildAutonomyDecisionMessage(input),
-      actionControl: buildAutonomyActionControl(),
-      systemPrompt: `你是 ${input.agent.displayName}，请只输出自治行为 JSON。`,
-    })
-
-    await prisma.agent.update({
-      where: { id: input.agent.id },
-      data: { status: 'active' },
-    })
-
-    return {
-      action: result.data.action,
-      topic: result.data.topic || input.hotTopic,
-      reason: result.data.reason || '基于人格、热点与社会关系作出的自治选择。',
-      query: result.data.query || null,
-      ringId: result.data.ringId || env.zhihu.ringIds[0] || null,
-    }
-  } catch {
-    await prisma.agent.update({
-      where: { id: input.agent.id },
-      data: { status: 'degraded' },
-    })
-
-    return deriveSeedAutonomyDecision({
-      agent: input.agent,
-      hotTopic: input.hotTopic,
-      districtLabel: input.districtLabel,
-      signals: input.signals,
-      ringIds: env.zhihu.ringIds,
-    })
+  let cooperateScore = compatibility + topicAffinity + pair.cooperateStrength * 0.3
+  if (
+    targetSocial.primaryGoal === 'forge_alliance' ||
+    targetSocial.secondaryGoal === 'forge_alliance'
+  ) {
+    cooperateScore += 0.14
   }
-}
-
-async function generateAutonomySpeech(input: {
-  agent: AgentWithSnapshot
-  decision: AgentAutonomyDecision
-}) {
-  if (input.agent.source !== 'real' || !input.agent.user) {
-    return {
-      ...fallbackAutonomySpeech(input),
-      origin: 'seed_rules' as const,
-    }
+  if (actorProfile.conflictMode === 'mediate' && target.style === 'balanced') {
+    cooperateScore += 0.1
   }
 
-  try {
-    const accessToken = await getValidAccessToken(input.agent.user)
-    const result = await streamSecondMeChat({
-      accessToken,
-      message: `请围绕「${input.decision.topic}」输出与你当前行为一致的表达。`,
-      systemPrompt: buildAutonomySpeechPrompt(input),
-    })
+  let allianceScore = trustScore + pair.allianceStrength * 0.28 + pair.cooperateStrength * 0.2
+  if (actorProfile.participationMode === 'ally') {
+    allianceScore += 0.12
+  }
 
-    if (result.content) {
-      return {
-        title: fallbackAutonomySpeech(input).title,
-        content: result.content,
-        origin: 'secondme' as const,
-      }
-    }
-  } catch {
-    // fallback below
+  let rejectScore = pair.rejectStrength * 0.4 + (stanceConflict ? 0.24 : 0)
+  if (actorProfile.conflictMode === 'avoid') {
+    rejectScore += stanceConflict ? 0.12 : 0
+  }
+  if (actorProfile.conflictMode === 'debate' && compatibility > -0.18) {
+    rejectScore -= 0.08
   }
 
   return {
-    ...fallbackAutonomySpeech(input),
-    origin: 'fallback' as const,
+    is_follow: compatibility + topicAffinity + pair.followStrength * 0.1 > 0.22,
+    is_trust: trustScore > 0.46,
+    is_cooperate: cooperateScore > 0.38,
+    is_alliance: allianceScore > 0.62,
+    is_reject: rejectScore > 0.26 && trustScore < 0.28,
   }
 }
 
-async function runAutonomousAgentBehaviors(input: {
-  tickNumber: number
-  hotTopic: string
-  agents: AgentWithSnapshot[]
-  residentsByDistrict: Map<DistrictId, AgentWithSnapshot[]>
-  signals: WorldSignalSet
-}) {
-  const candidates = [
-    ...(input.residentsByDistrict.get('signal_market') || []).slice(0, 1),
-    ...(input.residentsByDistrict.get('policy_spire') || []).slice(0, 1),
-    ...(input.residentsByDistrict.get('knowledge_docks') || []).slice(0, 1),
-    ...(input.residentsByDistrict.get('roundtable_hall') || []).slice(0, 1),
-    ...input.agents
-      .filter((agent) => agent.source === 'real')
-      .slice(0, 1),
-  ].filter((agent, index, list) => list.findIndex((item) => item.id === agent.id) === index)
+async function deriveRelationshipDecisionWithContext(
+  actor: AgentWithSnapshot,
+  target: AgentWithSnapshot,
+  topic: string,
+  relationships: Array<{
+    sourceAgentId: string
+    targetAgentId: string
+    type: RelationshipType
+    strength: number
+  }>
+) {
+  const compatibility = compatibilityScore(actor, target)
+  const actorProfile = getDecisionProfile(actor)
+  const pair = getPairRelationshipSignal(actor.id, target.id, relationships)
+  const targetSocial = getSocialProfileFromAgent(target)
+  const heuristicDecision = buildHeuristicRelationshipDecision(actor, target, topic, relationships)
 
-  for (const agent of candidates) {
-    const districtLabel = getDistrictByPoint(
-      agent.zonePresence?.x || 0,
-      agent.zonePresence?.y || 0
-    ).label
-    const activeCircle = input.signals.circles[0]
-    const decision = await deriveAutonomyDecision({
-      agent,
-      hotTopic: input.hotTopic,
-      districtLabel,
-      signals: input.signals,
+  if (actor.source !== 'real' || !actor.user) {
+    return heuristicDecision
+  }
+
+  try {
+    const accessToken = await getValidAccessToken(actor.user)
+    const decision = await streamSecondMeAct<{
+      is_follow: boolean
+      is_trust: boolean
+      is_cooperate: boolean
+      is_alliance: boolean
+      is_reject: boolean
+    }>({
+      accessToken,
+      message: [
+        `主题：${topic}`,
+        `对方：${target.displayName}`,
+        `对方兴趣：${getSnapshotTags(target).join('、') || '暂无明显标签'}`,
+        `对方风格：${target.style}`,
+        `对方立场：${target.stance}`,
+        `你的信任偏好：${actorProfile.trustPreference}`,
+        `你的冲突模式：${actorProfile.conflictMode}`,
+        `你的参与倾向：${actorProfile.participationMode}`,
+        `你们当前兼容度：${compatibility.toFixed(2)}`,
+        `历史关系：follow=${pair.followStrength.toFixed(2)}, trust=${pair.trustStrength.toFixed(2)}, cooperate=${pair.cooperateStrength.toFixed(2)}, alliance=${pair.allianceStrength.toFixed(2)}, reject=${pair.rejectStrength.toFixed(2)}`,
+        `对方社会目标：${targetSocial.primaryGoal} / ${targetSocial.secondaryGoal}`,
+      ].join('\n'),
+      actionControl: [
+        'Output only a valid JSON object.',
+        'Structure: {"is_follow": boolean, "is_trust": boolean, "is_cooperate": boolean, "is_alliance": boolean, "is_reject": boolean}.',
+        'Base the decision on values, trust preference, conflict mode, topic fit, and prior relationship signals.',
+        'Use is_follow when the other agent is worth continued attention, not only when they are similar.',
+        'Use is_trust when the other agent seems reliable under your trust preference.',
+        'Use is_cooperate when future collaboration is likely on this topic or social goal.',
+        'Use is_alliance only for durable, high-confidence alignment.',
+        'Use is_reject when value conflict or prior rejection outweighs trust.',
+        'When information is insufficient, set all fields to false.',
+      ].join('\n'),
+      systemPrompt: buildRoundtablePrompt(actor, topic, 'relationship_update'),
     })
-    const speech = await generateAutonomySpeech({
-      agent,
-      decision,
+
+    await prisma.agent.update({
+      where: { id: actor.id },
+      data: { status: 'active' },
     })
-    const zhihuMeta = buildZhihuSignalMeta(input.signals)
 
-    if (decision.action === 'publish_ring' && decision.ringId && env.zhihu.publishMode === 'autonomous') {
-      const publishResult = await publishControlledRingPost({
-        ringId: decision.ringId,
-        title: speech.title,
-        content: speech.content,
-      }).catch(() => null)
-
-      await createSocialEvent({
-        type: 'roundtable_summary',
-        actorAgentId: agent.id,
-        zone: agent.currentZone,
-        topic: decision.topic,
-        summary: `${agent.displayName} 已将自己的观点发布到知乎圈子。${decision.reason}`,
-        metadata: {
-          ...zhihuMeta,
-          publish: {
-            ringId: decision.ringId,
-            publishMode: env.zhihu.publishMode,
-            result: publishResult,
-            origin: speech.origin,
-          },
-        },
-      })
-      continue
-    }
-
-    if (decision.action === 'publish_ring') {
-      await createSocialEvent({
-        type: 'roundtable_summary',
-        actorAgentId: agent.id,
-        zone: agent.currentZone,
-        topic: decision.topic,
-        summary: `${agent.displayName} 已形成圈子发布意图，但当前仍处于受控发布模式。${speech.content}`,
-        metadata: {
-          ...zhihuMeta,
-          publish: {
-            ringId: decision.ringId,
-            publishMode: env.zhihu.publishMode,
-            queued: true,
-            origin: speech.origin,
-          },
-        },
-      })
-      continue
-    }
-
-    if (decision.action === 'comment_ring' && activeCircle?.contentToken) {
-      if (env.zhihu.publishMode === 'autonomous') {
-        const commentResult = await createRingComment({
-          contentToken: activeCircle.contentToken,
-          contentType: 'pin',
-          content: speech.content,
-        }).catch(() => null)
-
-        await createSocialEvent({
-          type: 'discuss_topic',
-          actorAgentId: agent.id,
-          zone: agent.currentZone,
-          topic: decision.topic,
-          summary: `${agent.displayName} 已在圈子「${activeCircle.title}」的真实内容下发表评论。${decision.reason}`,
-          metadata: {
-            ...zhihuMeta,
-            circleInteraction: {
-              mode: 'comment',
-              contentToken: activeCircle.contentToken,
-              ringId: decision.ringId,
-              result: commentResult,
-              origin: speech.origin,
-            },
-          },
-        })
-      } else {
-        await createSocialEvent({
-          type: 'discuss_topic',
-          actorAgentId: agent.id,
-          zone: agent.currentZone,
-          topic: decision.topic,
-          summary: `${agent.displayName} 已形成圈子评论意图，但当前仍处于受控模式。${speech.content}`,
-          metadata: {
-            ...zhihuMeta,
-            circleInteraction: {
-              mode: 'comment',
-              contentToken: activeCircle.contentToken,
-              ringId: decision.ringId,
-              queued: true,
-              origin: speech.origin,
-            },
-          },
-        })
-      }
-      continue
-    }
-
-    if (decision.action === 'react_ring' && activeCircle?.contentToken) {
-      if (env.zhihu.publishMode === 'autonomous') {
-        const reactionResult = await reactToRingContent({
-          contentToken: activeCircle.contentToken,
-          contentType: 'pin',
-          actionValue: 1,
-        }).catch(() => null)
-
-        await createSocialEvent({
-          type: 'inspect_leaderboard',
-          actorAgentId: agent.id,
-          zone: agent.currentZone,
-          topic: decision.topic,
-          summary: `${agent.displayName} 已对圈子「${activeCircle.title}」中的内容完成点赞互动。${decision.reason}`,
-          metadata: {
-            ...zhihuMeta,
-            circleInteraction: {
-              mode: 'reaction',
-              contentToken: activeCircle.contentToken,
-              ringId: decision.ringId,
-              result: reactionResult,
-              origin: speech.origin,
-            },
-          },
-        })
-      } else {
-        await createSocialEvent({
-          type: 'inspect_leaderboard',
-          actorAgentId: agent.id,
-          zone: agent.currentZone,
-          topic: decision.topic,
-          summary: `${agent.displayName} 已形成圈子点赞意图，但当前仍处于受控模式。${speech.content}`,
-          metadata: {
-            ...zhihuMeta,
-            circleInteraction: {
-              mode: 'reaction',
-              contentToken: activeCircle.contentToken,
-              ringId: decision.ringId,
-              queued: true,
-              origin: speech.origin,
-            },
-          },
-        })
-      }
-      continue
-    }
-
-    if (decision.action === 'synthesize_evidence') {
-      await createSocialEvent({
-        type: 'discuss_topic',
-        actorAgentId: agent.id,
-        zone: agent.currentZone,
-        topic: decision.query || decision.topic,
-        summary: `${agent.displayName} 正在引用可信搜证据梳理「${decision.query || decision.topic}」。${speech.content}`,
-        metadata: {
-          ...zhihuMeta,
-          evidence: {
-            query: decision.query,
-            origin: speech.origin,
-          },
-        },
-      })
-      continue
-    }
-
-    if (decision.action === 'broadcast_mascot') {
-      await createSocialEvent({
-        type: 'inspect_leaderboard',
-        actorAgentId: agent.id,
-        zone: agent.currentZone,
-        topic: decision.topic,
-        summary: `${agent.displayName} 通过刘看山向导视角播报当前社会焦点。${speech.content}`,
-        metadata: {
-          ...zhihuMeta,
-          mascot: {
-            origin: speech.origin,
-          },
-        },
-      })
-      continue
-    }
-
-    if (decision.action === 'inspect_leaderboard') {
-      await createSocialEvent({
-        type: 'inspect_leaderboard',
-        actorAgentId: agent.id,
-        zone: agent.currentZone,
-        topic: decision.topic,
-        summary: `${agent.displayName} 正在观察榜单并评估自己的社会位置。${speech.content}`,
-        metadata: {
-          ...zhihuMeta,
-          autonomy: {
-            reason: decision.reason,
-            origin: speech.origin,
-          },
-        },
-      })
-      continue
-    }
-
-    await createSocialEvent({
-      type: 'discuss_topic',
-      actorAgentId: agent.id,
-      zone: agent.currentZone,
-      topic: decision.topic,
-      summary: `${agent.displayName} 正在自主讨论「${decision.topic}」。${speech.content}`,
-      metadata: {
-        ...zhihuMeta,
-        autonomy: {
-          reason: decision.reason,
-          origin: speech.origin,
-        },
-      },
+    return decision.data
+  } catch {
+    await prisma.agent.update({
+      where: { id: actor.id },
+      data: { status: 'degraded' },
     })
+
+    return heuristicDecision
   }
 }
 
@@ -2507,7 +3212,7 @@ async function upsertRelationship(input: {
   rationale: string
   topic: string
   zone?: ZoneType
-  metadata?: Prisma.InputJsonValue
+  roundtableId?: string
 }) {
   await prisma.relationship.upsert({
     where: {
@@ -2537,8 +3242,71 @@ async function upsertRelationship(input: {
     zone: input.zone || 'roundtable',
     topic: input.topic,
     summary: input.rationale,
-    metadata: input.metadata,
+    roundtableId: input.roundtableId,
   })
+}
+
+function sortAgentsForDistrict(residents: AgentWithSnapshot[], tickNumber: number, districtId: DistrictId) {
+  return [...residents].sort((left, right) => {
+    const driveDelta = getRoundtableDrive(right, null, []) - getRoundtableDrive(left, null, [])
+    if (driveDelta !== 0) {
+      return driveDelta
+    }
+
+    const influenceDelta = right.influence - left.influence
+    if (influenceDelta !== 0) {
+      return influenceDelta
+    }
+
+    return (
+      seededFloat(`${districtId}:${tickNumber}:${right.id}:order`) -
+      seededFloat(`${districtId}:${tickNumber}:${left.id}:order`)
+    )
+  })
+}
+
+function pickPartnerForDistrict(
+  leader: AgentWithSnapshot,
+  residents: AgentWithSnapshot[],
+  tickNumber: number,
+  districtId: DistrictId
+) {
+  return residents
+    .filter((resident) => resident.id !== leader.id)
+    .sort((left, right) => {
+      const compatibilityDelta = compatibilityScore(leader, right) - compatibilityScore(leader, left)
+      if (compatibilityDelta !== 0) {
+        return compatibilityDelta
+      }
+
+      return (
+        seededFloat(`${districtId}:${tickNumber}:${right.id}:partner`) -
+        seededFloat(`${districtId}:${tickNumber}:${left.id}:partner`)
+      )
+    })[0]
+}
+
+function buildDistrictTopic(
+  agent: AgentWithSnapshot,
+  districtId: DistrictId,
+  hotTopic: string | null
+) {
+  const social = getSocialProfileFromAgent(agent)
+  const topTag = getSnapshotTags(agent)[0]
+
+  if (hotTopic && (social.primaryGoal === 'track_hotspots' || agentMatchesTopic(agent, hotTopic))) {
+    return hotTopic
+  }
+
+  if (topTag) {
+    return topTag
+  }
+
+  if (districtId === 'maker_yard' || districtId === 'guild_quarter') {
+    return `${getSocialGoalLabel(social.primaryGoal)}计划`
+  }
+
+  return `${getSocialFactionLabel(social.faction)} × ${getSocialGoalLabel(social.primaryGoal)}`
 }
 
 function buildDistrictEconomyPlan(input: {
@@ -2770,13 +3538,10 @@ async function runDistrictSocialDynamics(input: {
   hotTopic: string | null
   residentsByDistrict: Map<DistrictId, AgentWithSnapshot[]>
   districtProsperity: Map<DistrictId, number>
-  signals: WorldSignalSet
 }) {
-  const zhihuMeta = buildZhihuSignalMeta(input.signals)
-  const activeCircle = input.signals.circles[0]
-  const trustedEvidence = input.signals.trustedResults[0]
-  const trustedBoost = trustedEvidence ? 0.08 : 0
-  const circleBoost = activeCircle ? 0.05 : 0
+  if (!input.hotTopic) {
+    return
+  }
 
   for (const district of WORLD_DISTRICTS) {
     const residents = input.residentsByDistrict.get(district.id) || []
@@ -2791,7 +3556,7 @@ async function runDistrictSocialDynamics(input: {
 
     const partner = pickPartnerForDistrict(leader, residents, input.tickNumber, district.id)
     const social = getSocialProfileFromAgent(leader)
-    const topic = buildDistrictTopic(leader, district.id, input.hotTopic)
+    const topic = input.hotTopic
     const pulse = seededFloat(`${district.id}:${input.tickNumber}:pulse`)
     const districtProsperityScore = input.districtProsperity.get(district.id) || 0
     const residentCount = residents.length
@@ -2817,7 +3582,6 @@ async function runDistrictSocialDynamics(input: {
           metadata: {
             districtId: district.id,
             goal: social.primaryGoal,
-            ...zhihuMeta,
           },
         })
       }
@@ -2848,7 +3612,7 @@ async function runDistrictSocialDynamics(input: {
           type: pulse > 0.58 ? 'alliance' : 'cooperate',
           sourceAgentId: leader.id,
           targetAgentId: partner.id,
-          strength: Math.max(0.3, compatibilityScore(leader, partner) + 0.54 + circleBoost),
+          strength: Math.max(0.3, compatibilityScore(leader, partner) + 0.54),
           rationale: `${leader.displayName} 在 ${district.label} 与 ${partner.displayName} 对齐长期事业目标，准备围绕「${topic}」推进分工。`,
           topic,
           zone: district.zoneFocus,
@@ -2887,7 +3651,6 @@ async function runDistrictSocialDynamics(input: {
           metadata: {
             districtId: district.id,
             faction: social.faction,
-            ...zhihuMeta,
           },
         })
       }
@@ -2897,11 +3660,10 @@ async function runDistrictSocialDynamics(input: {
           type: 'trust',
           sourceAgentId: leader.id,
           targetAgentId: partner.id,
-          strength: Math.max(0.2, compatibilityScore(leader, partner) + 0.42 + circleBoost),
+          strength: Math.max(0.2, compatibilityScore(leader, partner) + 0.42),
           rationale: `${leader.displayName} 在 ${district.label} 认可 ${partner.displayName} 的社会判断，双方建立了更稳定的信任。`,
           topic,
           zone: district.zoneFocus,
-          metadata: zhihuMeta,
         })
       }
       await emitDistrictEconomyActivity({
@@ -2932,11 +3694,10 @@ async function runDistrictSocialDynamics(input: {
         targetAgentId: partner?.id,
         zone: district.zoneFocus,
         topic,
-        summary: `${leader.displayName} 在 ${district.label} 追踪「${topic}」的热度变化，并观察它如何改写社会榜。${activeCircle ? ` 当前圈层语境来自「${activeCircle.title}」。` : ''}`,
+        summary: `${leader.displayName} 在 ${district.label} 追踪「${topic}」的热度变化，并观察它如何改写社会榜。`,
         metadata: {
           districtId: district.id,
           goal: social.primaryGoal,
-          ...zhihuMeta,
         },
       })
 
@@ -2945,11 +3706,10 @@ async function runDistrictSocialDynamics(input: {
           type: 'follow',
           sourceAgentId: leader.id,
           targetAgentId: partner.id,
-          strength: Math.max(0.16, compatibilityScore(leader, partner) + 0.28 + circleBoost),
+          strength: Math.max(0.16, compatibilityScore(leader, partner) + 0.28),
           rationale: `${leader.displayName} 决定继续跟踪 ${partner.displayName} 在「${topic}」上的动态表现。`,
           topic,
           zone: district.zoneFocus,
-          metadata: zhihuMeta,
         })
       }
       await emitDistrictEconomyActivity({
@@ -2980,11 +3740,10 @@ async function runDistrictSocialDynamics(input: {
         targetAgentId: partner?.id,
         zone: district.zoneFocus,
         topic,
-        summary: `${leader.displayName} 在 ${district.label} 围绕「${topic}」梳理事实、立场与长期影响。${trustedEvidence ? ` 当前引用证据焦点是「${trustedEvidence.query}」。` : ''}`,
+        summary: `${leader.displayName} 在 ${district.label} 围绕「${topic}」梳理事实、立场与长期影响。`,
         metadata: {
           districtId: district.id,
           career: social.career,
-          ...zhihuMeta,
         },
       })
 
@@ -2993,11 +3752,10 @@ async function runDistrictSocialDynamics(input: {
           type: social.primaryGoal === 'publish_knowledge' ? 'trust' : 'follow',
           sourceAgentId: leader.id,
           targetAgentId: partner.id,
-          strength: Math.max(0.18, compatibilityScore(leader, partner) + 0.36 + trustedBoost),
+          strength: Math.max(0.18, compatibilityScore(leader, partner) + 0.36),
           rationale: `${leader.displayName} 在 ${district.label} 认可 ${partner.displayName} 对「${topic}」的补充价值。`,
           topic,
           zone: district.zoneFocus,
-          metadata: zhihuMeta,
         })
       }
       await emitDistrictEconomyActivity({
@@ -3028,11 +3786,10 @@ async function runDistrictSocialDynamics(input: {
         targetAgentId: partner?.id,
         zone: district.zoneFocus,
         topic,
-        summary: `${leader.displayName} 在 ${district.label} 发起关于「${topic}」的议程征集，等待更多 Agent 入场。${activeCircle ? ` 讨论语境参考了圈子「${activeCircle.title}」。` : ''}`,
+        summary: `${leader.displayName} 在 ${district.label} 发起关于「${topic}」的议程征集，等待更多 Agent 入场。`,
         metadata: {
           districtId: district.id,
           goal: social.primaryGoal,
-          ...zhihuMeta,
         },
       })
 
@@ -3041,11 +3798,10 @@ async function runDistrictSocialDynamics(input: {
           type: 'alliance',
           sourceAgentId: leader.id,
           targetAgentId: partner.id,
-          strength: Math.max(0.28, compatibilityScore(leader, partner) + 0.5 + circleBoost),
+          strength: Math.max(0.28, compatibilityScore(leader, partner) + 0.5),
           rationale: `${leader.displayName} 与 ${partner.displayName} 在 ${district.label} 达成了更长期的讨论联盟。`,
           topic,
           zone: district.zoneFocus,
-          metadata: zhihuMeta,
         })
       }
       await emitDistrictEconomyActivity({
@@ -3076,11 +3832,10 @@ async function runDistrictSocialDynamics(input: {
         targetAgentId: partner?.id,
         zone: district.zoneFocus,
         topic,
-        summary: `${leader.displayName} 在 ${district.label} 把「${topic}」沉淀为可被社会图谱复用的知识条目。${trustedEvidence ? ' 可信搜证据已参与观点收敛。' : ''}`,
+        summary: `${leader.displayName} 在 ${district.label} 把「${topic}」沉淀为可被社会图谱复用的知识条目。`,
         metadata: {
           districtId: district.id,
           goal: social.primaryGoal,
-          ...zhihuMeta,
         },
       })
 
@@ -3089,11 +3844,10 @@ async function runDistrictSocialDynamics(input: {
           type: 'trust',
           sourceAgentId: leader.id,
           targetAgentId: partner.id,
-          strength: Math.max(0.2, compatibilityScore(leader, partner) + 0.4 + trustedBoost),
+          strength: Math.max(0.2, compatibilityScore(leader, partner) + 0.4),
           rationale: `${leader.displayName} 认为 ${partner.displayName} 能把知识沉淀转化成持续协作。`,
           topic,
           zone: district.zoneFocus,
-          metadata: zhihuMeta,
         })
       }
 
@@ -3122,19 +3876,126 @@ async function runDistrictSocialDynamics(input: {
 async function createRoundtable(
   agents: AgentWithSnapshot[],
   tickNumber: number,
-  preferredTopic: string | null
+  hotTopic: string | null,
+  relationships: Array<{
+    sourceAgentId: string
+    targetAgentId: string
+    type: RelationshipType
+    strength: number
+  }>
 ) {
   if (agents.length < 3) {
     return null
   }
 
-  const host = pickRoundtableHost(agents, tickNumber)
-  const topic = buildRoundtableTopic(
-    host,
-    tickNumber,
-    preferredTopic ? [preferredTopic, ...fallbackTopics] : fallbackTopics
-  )
-  const sortedParticipants = pickRoundtableParticipants(host, agents)
+  const hostCandidates = [...agents]
+    .sort(
+      (left, right) =>
+        getRoundtableDrive(right, hotTopic, relationships) -
+        getRoundtableDrive(left, hotTopic, relationships)
+    )
+    .slice(0, Math.min(4, agents.length))
+  const host = pickDeterministic(hostCandidates, `host:${tickNumber}`)
+  const hostTags = getSnapshotTags(host)
+  const hostSocial = getSocialProfileFromAgent(host)
+  const topic =
+    hostTags[0] ||
+    `${getSocialGoalLabel(hostSocial.primaryGoal)}与${getSocialFactionLabel(hostSocial.faction)}` ||
+    pickDeterministic(fallbackTopics, `${host.slug}:${tickNumber}:topic`)
+
+  const sortedParticipants = [...agents]
+    .filter((agent) => agent.id !== host.id)
+    .sort((left, right) => compatibilityScore(host, right) - compatibilityScore(host, left))
+    .slice(0, 3)
+
+  const roundtable = await prisma.roundtable.create({
+    data: {
+      hostAgentId: host.id,
+      topic,
+      status: 'match',
+      participants: {
+        create: [
+          {
+            agentId: host.id,
+            role: 'host',
+          },
+          ...sortedParticipants.map((agent) => ({
+            agentId: agent.id,
+            role: 'guest',
+          })),
+        ],
+      },
+    },
+    include: {
+      hostAgent: true,
+      participants: {
+        include: {
+          agent: true,
+        },
+      },
+      turns: {
+        include: {
+          speakerAgent: true,
+        },
+      },
+    },
+  })
+
+  await createSocialEvent({
+    type: 'join_roundtable',
+    actorAgentId: host.id,
+    zone: 'roundtable',
+    topic,
+    roundtableId: roundtable.id,
+    summary: `${host.displayName} 正在召集一场关于「${topic}」的圆桌。`,
+  })
+
+  return roundtable
+}
+
+async function createRoundtableWithContext(
+  agents: AgentWithSnapshot[],
+  tickNumber: number,
+  hotTopic: string | null,
+  relationships: Array<{
+    sourceAgentId: string
+    targetAgentId: string
+    type: RelationshipType
+    strength: number
+  }>
+) {
+  if (agents.length < 3) {
+    return null
+  }
+
+  const hostCandidates = [...agents]
+    .sort(
+      (left, right) =>
+        getRoundtableDrive(right, hotTopic, relationships) -
+        getRoundtableDrive(left, hotTopic, relationships)
+    )
+    .slice(0, Math.min(4, agents.length))
+  const host = pickDeterministic(hostCandidates, `host:${tickNumber}`)
+  const topic = selectRoundtableTopic(host, agents, hotTopic, tickNumber)
+
+  const sortedParticipants = [...agents]
+    .filter((agent) => agent.id !== host.id)
+    .sort(
+      (left, right) =>
+        scoreRoundtableCandidate({
+          host,
+          candidate: right,
+          topic,
+          relationships,
+        }) -
+        scoreRoundtableCandidate({
+          host,
+          candidate: left,
+          topic,
+          relationships,
+        })
+    )
+    .slice(0, 3)
 
   const roundtable = await prisma.roundtable.create({
     data: {
@@ -3247,28 +4108,36 @@ async function advanceRoundtable(
   }
 
   if (roundtable.status === 'opening') {
-    const openingTurns = []
+    const openingTurns: RoundtableTurn[] = []
     for (const agent of participants) {
       const message = await generateRoundtableMessage(agent, roundtable.topic, 'opening')
-      openingTurns.push(
-        await prisma.roundtableTurn.create({
-          data: {
-            roundtableId: roundtable.id,
-            turnIndex: roundtable.turns.length + openingTurns.length,
-            stage: 'opening',
-            speakerAgentId: agent.id,
-            content: message.content,
-            audioUrl: message.audioUrl,
-            metadata: {
-              origin: message.origin,
-              degraded: message.degraded,
-              source: agent.source,
-              stance: agent.stance,
-              style: agent.style,
-            },
+      const turn = await prisma.roundtableTurn.create({
+        data: {
+          roundtableId: roundtable.id,
+          turnIndex: roundtable.turns.length + openingTurns.length,
+          stage: 'opening',
+          speakerAgentId: agent.id,
+          content: message.content,
+          audioUrl: message.audioUrl,
+          metadata: {
+            origin: message.origin,
+            degraded: message.degraded,
+            source: agent.source,
+            stance: agent.stance,
+            style: agent.style,
           },
-        })
-      )
+        },
+      })
+      openingTurns.push(turn)
+
+      await createSocialEvent({
+        type: 'discuss_topic',
+        actorAgentId: agent.id,
+        zone: 'roundtable',
+        topic: roundtable.topic,
+        roundtableId: roundtable.id,
+        summary: `${agent.displayName} 在圆桌开场中表达了对「${roundtable.topic}」的第一轮看法。`,
+      })
     }
 
     await prisma.roundtable.update({
@@ -3282,28 +4151,36 @@ async function advanceRoundtable(
   }
 
   if (roundtable.status === 'responses') {
-    const responseTurns = []
+    const responseTurns: RoundtableTurn[] = []
     for (const agent of participants) {
       const message = await generateRoundtableMessage(agent, roundtable.topic, 'responses')
-      responseTurns.push(
-        await prisma.roundtableTurn.create({
-          data: {
-            roundtableId: roundtable.id,
-            turnIndex: roundtable.turns.length + responseTurns.length,
-            stage: 'responses',
-            speakerAgentId: agent.id,
-            content: message.content,
-            audioUrl: message.audioUrl,
-            metadata: {
-              origin: message.origin,
-              degraded: message.degraded,
-              source: agent.source,
-              stance: agent.stance,
-              style: agent.style,
-            },
+      const turn = await prisma.roundtableTurn.create({
+        data: {
+          roundtableId: roundtable.id,
+          turnIndex: roundtable.turns.length + responseTurns.length,
+          stage: 'responses',
+          speakerAgentId: agent.id,
+          content: message.content,
+          audioUrl: message.audioUrl,
+          metadata: {
+            origin: message.origin,
+            degraded: message.degraded,
+            source: agent.source,
+            stance: agent.stance,
+            style: agent.style,
           },
-        })
-      )
+        },
+      })
+      responseTurns.push(turn)
+
+      await createSocialEvent({
+        type: 'discuss_topic',
+        actorAgentId: agent.id,
+        zone: 'roundtable',
+        topic: roundtable.topic,
+        roundtableId: roundtable.id,
+        summary: `${agent.displayName} 在圆桌回应阶段补充了对「${roundtable.topic}」的新观点。`,
+      })
     }
 
     await prisma.roundtable.update({
@@ -3363,6 +4240,105 @@ async function advanceRoundtable(
   }
 
   if (roundtable.status === 'relationship_update') {
+    const relationshipRows = await prisma.relationship.findMany({
+      select: {
+        sourceAgentId: true,
+        targetAgentId: true,
+        type: true,
+        strength: true,
+      },
+    })
+
+    for (let sourceIndex = 0; sourceIndex < participants.length; sourceIndex += 1) {
+      for (let targetIndex = 0; targetIndex < participants.length; targetIndex += 1) {
+        if (sourceIndex === targetIndex) {
+          continue
+        }
+
+        const source = participants[sourceIndex]
+        const target = participants[targetIndex]
+        const decision = await deriveRelationshipDecisionWithContext(
+          source,
+          target,
+          roundtable.topic,
+          relationshipRows
+        )
+        const strength = Math.max(0.1, compatibilityScore(source, target) + 0.5)
+
+        if (decision.is_follow) {
+          await upsertRelationship({
+            type: 'follow',
+            sourceAgentId: source.id,
+            targetAgentId: target.id,
+            strength,
+            rationale: `${source.displayName} 在圆桌后愿意继续关注 ${target.displayName}。`,
+            topic: roundtable.topic,
+            roundtableId: roundtable.id,
+          })
+        }
+
+        if (decision.is_trust) {
+          await upsertRelationship({
+            type: 'trust',
+            sourceAgentId: source.id,
+            targetAgentId: target.id,
+            strength: strength + 0.15,
+            rationale: `${source.displayName} 认为 ${target.displayName} 的观点具有可信度。`,
+            topic: roundtable.topic,
+            roundtableId: roundtable.id,
+          })
+        }
+
+        if (decision.is_cooperate) {
+          await upsertRelationship({
+            type: 'cooperate',
+            sourceAgentId: source.id,
+            targetAgentId: target.id,
+            strength: strength + 0.12,
+            rationale: `${source.displayName} 愿意与 ${target.displayName} 继续合作。`,
+            topic: roundtable.topic,
+            roundtableId: roundtable.id,
+          })
+        }
+
+        if (decision.is_alliance) {
+          await upsertRelationship({
+            type: 'alliance',
+            sourceAgentId: source.id,
+            targetAgentId: target.id,
+            strength: strength + 0.22,
+            rationale: `${source.displayName} 将 ${target.displayName} 视为长期盟友。`,
+            topic: roundtable.topic,
+            roundtableId: roundtable.id,
+          })
+        }
+
+        if (decision.is_reject) {
+          await upsertRelationship({
+            type: 'reject',
+            sourceAgentId: source.id,
+            targetAgentId: target.id,
+            strength: Math.max(0.1, 0.5 - strength),
+            rationale: `${source.displayName} 与 ${target.displayName} 在该议题上形成明显分歧。`,
+            topic: roundtable.topic,
+            roundtableId: roundtable.id,
+          })
+        }
+      }
+    }
+
+    await prisma.roundtable.update({
+      where: { id: roundtable.id },
+      data: {
+        status: 'completed',
+        endedAt: new Date(),
+      },
+    })
+
+    return
+  }
+
+  if (false) {
     for (let sourceIndex = 0; sourceIndex < participants.length; sourceIndex += 1) {
       for (let targetIndex = 0; targetIndex < participants.length; targetIndex += 1) {
         if (sourceIndex === targetIndex) {
@@ -3441,7 +4417,9 @@ async function advanceRoundtable(
         continue
       }
 
-      const record = contributionStats.get(turn.speakerAgentId) || {
+      const speakerAgentId = turn.speakerAgentId!
+
+      const record = contributionStats.get(speakerAgentId) || {
         turns: 0,
         secondMeTurns: 0,
         fallbackTurns: 0,
@@ -3455,7 +4433,7 @@ async function advanceRoundtable(
         record.fallbackTurns += 1
       }
 
-      contributionStats.set(turn.speakerAgentId, record)
+      contributionStats.set(speakerAgentId, record)
     }
 
     await Promise.all(
@@ -3662,6 +4640,57 @@ async function recomputeScores(tickNumber: number) {
   )
 }
 
+async function ensureGraphNode(nodeKey: string, input: {
+  type: GraphNodeType
+  label: string
+  refId?: string
+  metadata?: Prisma.InputJsonValue
+}) {
+  return prisma.graphNode.upsert({
+    where: { nodeKey },
+    update: {
+      label: input.label,
+      metadata: input.metadata,
+    },
+    create: {
+      nodeKey,
+      nodeType: input.type,
+      refId: input.refId,
+      label: input.label,
+      metadata: input.metadata,
+    },
+  })
+}
+
+async function ensureGraphEdge(input: {
+  type: GraphEdgeType
+  sourceNodeId: string
+  targetNodeId: string
+  weight: number
+  metadata?: Prisma.InputJsonValue
+}) {
+  return prisma.graphEdge.upsert({
+    where: {
+      sourceNodeId_targetNodeId_edgeType: {
+        sourceNodeId: input.sourceNodeId,
+        targetNodeId: input.targetNodeId,
+        edgeType: input.type,
+      },
+    },
+    update: {
+      weight: input.weight,
+      metadata: input.metadata,
+    },
+    create: {
+      sourceNodeId: input.sourceNodeId,
+      targetNodeId: input.targetNodeId,
+      edgeType: input.type,
+      weight: input.weight,
+      metadata: input.metadata,
+    },
+  })
+}
+
 async function syncGraph() {
   const [agents, relationships, roundtables, economyEvents, upgradePlans] = await Promise.all([
     listAgents(),
@@ -3681,15 +4710,387 @@ async function syncGraph() {
     }),
   ])
 
-  await syncProjectedGraph({
-    agents,
-    relationships,
-    roundtables,
-    economyEvents,
-    upgradePlans,
-    zones: ZONE_META.map((zone) => ({
-      id: zone.id,
+  const nodeMap = new Map<string, string>()
+
+  for (const zone of ZONE_META) {
+    const node = await ensureGraphNode(`zone:${zone.id}`, {
+      type: 'zone',
       label: zone.label,
+      refId: zone.id,
+    })
+    nodeMap.set(node.nodeKey, node.id)
+  }
+
+  for (const agent of agents) {
+    const social = getSocialProfileFromAgent(agent)
+    const district = getDistrictByPoint(agent.zonePresence?.x || 0, agent.zonePresence?.y || 0)
+    const node = await ensureGraphNode(`agent:${agent.id}`, {
+      type: 'agent',
+      label: agent.displayName,
+      refId: agent.id,
+      metadata: {
+        source: agent.source,
+        stance: agent.stance,
+        career: social.career,
+        faction: social.faction,
+        primaryGoal: social.primaryGoal,
+      },
+    })
+    nodeMap.set(node.nodeKey, node.id)
+
+    const socialTopics = [
+      `职业:${getSocialCareerLabel(social.career)}`,
+      `阵营:${getSocialFactionLabel(social.faction)}`,
+      `目标:${getSocialGoalLabel(social.primaryGoal)}`,
+      `街区:${district.label}`,
+    ]
+
+    for (const topicLabel of socialTopics) {
+      const topicNode = await ensureGraphNode(`topic:${topicLabel}`, {
+        type: 'topic',
+        label: topicLabel,
+      })
+      nodeMap.set(topicNode.nodeKey, topicNode.id)
+
+      await ensureGraphEdge({
+        type: 'mentions',
+        sourceNodeId: node.id,
+        targetNodeId: topicNode.id,
+        weight: 1,
+      })
+    }
+
+    const currentZoneNodeId = nodeMap.get(`zone:${agent.currentZone}`)
+    if (currentZoneNodeId) {
+      await ensureGraphEdge({
+        type: 'participates_in',
+        sourceNodeId: node.id,
+        targetNodeId: currentZoneNodeId,
+        weight: 1,
+        metadata: {
+          districtId: district.id,
+          districtLabel: district.label,
+        },
+      })
+    }
+  }
+
+  for (const roundtable of roundtables) {
+    const roundtableNode = await ensureGraphNode(`roundtable:${roundtable.id}`, {
+      type: 'roundtable',
+      label: roundtable.topic,
+      refId: roundtable.id,
+      metadata: {
+        status: roundtable.status,
+      },
+    })
+    nodeMap.set(roundtableNode.nodeKey, roundtableNode.id)
+
+    const topicNode = await ensureGraphNode(`topic:${roundtable.topic}`, {
+      type: 'topic',
+      label: roundtable.topic,
+      refId: roundtable.id,
+    })
+    nodeMap.set(topicNode.nodeKey, topicNode.id)
+
+    await ensureGraphEdge({
+      type: 'mentions',
+      sourceNodeId: roundtableNode.id,
+      targetNodeId: topicNode.id,
+      weight: 1,
+    })
+
+    const knowledge = toRecord(roundtable.knowledgeJson)
+    const knowledgeInsight = typeof knowledge.keyInsight === 'string' ? knowledge.keyInsight : ''
+
+    if (knowledgeInsight) {
+      const knowledgeNode = await ensureGraphNode(`knowledge:${roundtable.id}`, {
+        type: 'knowledge',
+        label: `洞察:${roundtable.topic}`,
+        refId: roundtable.id,
+        metadata: roundtable.knowledgeJson as Prisma.InputJsonValue,
+      })
+      nodeMap.set(knowledgeNode.nodeKey, knowledgeNode.id)
+
+      await ensureGraphEdge({
+        type: 'mentions',
+        sourceNodeId: roundtableNode.id,
+        targetNodeId: knowledgeNode.id,
+        weight: 1,
+      })
+
+      await ensureGraphEdge({
+        type: 'mentions',
+        sourceNodeId: topicNode.id,
+        targetNodeId: knowledgeNode.id,
+        weight: 1,
+      })
+
+      for (const participant of roundtable.participants) {
+        const agentNodeId = nodeMap.get(`agent:${participant.agentId}`)
+        if (!agentNodeId) {
+          continue
+        }
+
+        await ensureGraphEdge({
+          type: 'mentions',
+          sourceNodeId: agentNodeId,
+          targetNodeId: knowledgeNode.id,
+          weight: 1,
+        })
+      }
+    }
+
+    for (const participant of roundtable.participants) {
+      const agentNodeId = nodeMap.get(`agent:${participant.agentId}`)
+      if (!agentNodeId) {
+        continue
+      }
+
+      await ensureGraphEdge({
+        type: 'participates_in',
+        sourceNodeId: agentNodeId,
+        targetNodeId: roundtableNode.id,
+        weight: participant.contributionScore || 1,
+      })
+
+      await ensureGraphEdge({
+        type: 'discusses',
+        sourceNodeId: agentNodeId,
+        targetNodeId: topicNode.id,
+        weight: 1,
+      })
+    }
+  }
+
+  for (const event of economyEvents) {
+    const economy = parseEconomyMeta(event.metadata)
+    if (!economy) {
+      continue
+    }
+
+    const resourceNode = await ensureGraphNode(`topic:资源:${economy.resource}`, {
+      type: 'topic',
+      label: `资源:${economy.resourceLabel}`,
+      metadata: {
+        category: economy.category,
+        units: economy.units,
+      },
+    })
+    nodeMap.set(resourceNode.nodeKey, resourceNode.id)
+
+    if (economy.districtLabel) {
+      const districtNode = await ensureGraphNode(`topic:街区资源:${economy.districtLabel}`, {
+        type: 'topic',
+        label: `街区:${economy.districtLabel}`,
+        metadata: {
+          resource: economy.resourceLabel,
+          category: economy.category,
+        },
+      })
+      nodeMap.set(districtNode.nodeKey, districtNode.id)
+
+      await ensureGraphEdge({
+        type: 'mentions',
+        sourceNodeId: districtNode.id,
+        targetNodeId: resourceNode.id,
+        weight: Math.max(1, economy.units),
+      })
+
+      if (economy.category === 'alliance_investment' || economy.category === 'resource_consumption') {
+        const governanceLabel =
+          economy.category === 'alliance_investment' ? '治理:联盟投资' : '治理:街区维持'
+        const governanceNode = await ensureGraphNode(`topic:${governanceLabel}`, {
+          type: 'topic',
+          label: governanceLabel,
+          metadata: {
+            districtLabel: economy.districtLabel,
+            resource: economy.resourceLabel,
+          },
+        })
+        nodeMap.set(governanceNode.nodeKey, governanceNode.id)
+
+        await ensureGraphEdge({
+          type: 'mentions',
+          sourceNodeId: districtNode.id,
+          targetNodeId: governanceNode.id,
+          weight: Math.max(1, economy.units),
+        })
+
+        await ensureGraphEdge({
+          type: 'mentions',
+          sourceNodeId: governanceNode.id,
+          targetNodeId: resourceNode.id,
+          weight: Math.max(1, economy.units),
+        })
+      }
+    }
+
+    if (event.actorAgentId) {
+      const agentNodeId = nodeMap.get(`agent:${event.actorAgentId}`)
+      if (agentNodeId) {
+        await ensureGraphEdge({
+          type: 'discusses',
+          sourceNodeId: agentNodeId,
+          targetNodeId: resourceNode.id,
+          weight: Math.max(1, economy.units),
+          metadata: {
+            category: economy.category,
+          },
+        })
+      }
+    }
+
+    if (economy.workPointId && economy.workPointLabel) {
+      const outputNode = await ensureGraphNode(`knowledge:work:${economy.workPointId}`, {
+        type: 'knowledge',
+        label: `${economy.workPointLabel}:${economy.resourceLabel}`,
+        metadata: {
+          category: economy.category,
+          districtLabel: economy.districtLabel,
+          units: economy.units,
+        },
+      })
+      nodeMap.set(outputNode.nodeKey, outputNode.id)
+
+      await ensureGraphEdge({
+        type: 'mentions',
+        sourceNodeId: resourceNode.id,
+        targetNodeId: outputNode.id,
+        weight: Math.max(1, economy.units),
+      })
+    }
+
+    if (event.targetAgentId && economy.category === 'resource_exchange') {
+      const targetNodeId = nodeMap.get(`agent:${event.targetAgentId}`)
+      if (targetNodeId) {
+        await ensureGraphEdge({
+          type: 'discusses',
+          sourceNodeId: targetNodeId,
+          targetNodeId: resourceNode.id,
+          weight: Math.max(1, economy.units),
+          metadata: {
+            category: 'resource_exchange',
+          },
+        })
+      }
+    }
+  }
+
+  for (const plan of upgradePlans) {
+    const projectNode = await ensureGraphNode(`knowledge:project:${plan.id}`, {
+      type: 'knowledge',
+      label: `工程:${plan.title}`,
+      refId: plan.id,
+      metadata: {
+        districtLabel: plan.districtLabel,
+        stage: plan.stage,
+        progressPercent: plan.progressPercent,
+        requiredResourceLabel: plan.requiredResourceLabel,
+      },
+    })
+    nodeMap.set(projectNode.nodeKey, projectNode.id)
+
+    const districtNode = await ensureGraphNode(`topic:街区资源:${plan.districtLabel}`, {
+      type: 'topic',
+      label: `街区:${plan.districtLabel}`,
+      metadata: {
+        project: plan.title,
+      },
+    })
+    nodeMap.set(districtNode.nodeKey, districtNode.id)
+
+    await ensureGraphEdge({
+      type: 'mentions',
+      sourceNodeId: districtNode.id,
+      targetNodeId: projectNode.id,
+      weight: Math.max(1, plan.progressPercent / 25),
+      metadata: {
+        stage: plan.stage,
+      },
+    })
+
+    const resourceNode = await ensureGraphNode(`topic:资源:${plan.requiredResourceKey}`, {
+      type: 'topic',
+      label: `资源:${plan.requiredResourceLabel}`,
+      metadata: {
+        category: 'project_requirement',
+      },
+    })
+    nodeMap.set(resourceNode.nodeKey, resourceNode.id)
+
+    await ensureGraphEdge({
+      type: 'mentions',
+      sourceNodeId: projectNode.id,
+      targetNodeId: resourceNode.id,
+      weight: Math.max(1, plan.requiredUnits / 10),
+    })
+
+    if (plan.sponsorAgentId) {
+      const sponsorNodeId = nodeMap.get(`agent:${plan.sponsorAgentId}`)
+      if (sponsorNodeId) {
+        await ensureGraphEdge({
+          type: 'mentions',
+          sourceNodeId: sponsorNodeId,
+          targetNodeId: projectNode.id,
+          weight: Math.max(1, plan.progressPercent / 20),
+        })
+      }
+    }
+  }
+
+  const edgeTypeMap: Record<RelationshipType, GraphEdgeType> = {
+    follow: 'follows',
+    trust: 'trusts',
+    cooperate: 'cooperates',
+    reject: 'rejects',
+    alliance: 'cooperates',
+  }
+
+  for (const relationship of relationships) {
+    const sourceNodeId = nodeMap.get(`agent:${relationship.sourceAgentId}`)
+    const targetNodeId = nodeMap.get(`agent:${relationship.targetAgentId}`)
+
+    if (!sourceNodeId || !targetNodeId) {
+      continue
+    }
+
+    await ensureGraphEdge({
+      type: edgeTypeMap[relationship.type],
+      sourceNodeId,
+      targetNodeId,
+      weight: relationship.strength,
+      metadata: {
+        type: relationship.type,
+      },
+    })
+  }
+
+  const [nodes, edges] = await Promise.all([
+    prisma.graphNode.findMany({
+      orderBy: { updatedAt: 'desc' },
+      take: 48,
+    }),
+    prisma.graphEdge.findMany({
+      orderBy: { updatedAt: 'desc' },
+      take: 72,
+    }),
+  ])
+
+  await mirrorGraphToNeo4j({
+    nodes: nodes.map((node) => ({
+      id: node.id,
+      key: node.nodeKey,
+      type: node.nodeType,
+      label: node.label,
+      size: node.nodeType === 'agent' ? 18 : node.nodeType === 'topic' ? 15 : 12,
+    })),
+    edges: edges.map((edge) => ({
+      id: edge.id,
+      type: edge.edgeType,
+      source: edge.sourceNodeId,
+      target: edge.targetNodeId,
+      weight: edge.weight,
     })),
   })
 }
@@ -3761,33 +5162,21 @@ export async function runSimulationTick() {
       take: 24,
     }),
   ])
-  const tickSignals = await getZhihuWorldSignals(
-    recentEvents.find((event) => Boolean(event.topic))?.topic || null
-  )
-  const hotTopicSelection = selectWorldHotTopic({
-    tickNumber,
-    recentEvents,
-    hotTopics: tickSignals.hotTopics.items,
-    fallbackTopics,
-  })
   const agentMap = new Map(agents.map((agent) => [agent.id, agent]))
+  const hotTopicSelection = await selectRuntimeHotTopicSelection(tickNumber, recentEvents)
+  const hotTopicSignal = hotTopicSelection.primary
+  const hotTopic = hotTopicSignal?.topic || null
+  const hasZhihuDiscussionTopic = hotTopicSignal?.source === 'zhihu' && Boolean(hotTopic)
   let roundtable = await getActiveRoundtable()
 
-  if (!roundtable && agents.length >= 3 && tickNumber % 2 === 1) {
-    roundtable = await createRoundtable(agents, tickNumber, hotTopicSelection.topic)
+  if (!roundtable && hasZhihuDiscussionTopic && agents.length >= 3 && tickNumber % 2 === 1) {
+    roundtable = await createRoundtableWithContext(agents, tickNumber, hotTopic, relationships)
   } else if (roundtable) {
     await advanceRoundtable(roundtable, agentMap)
     roundtable = await getActiveRoundtable()
   }
 
   const participantIds = new Set(roundtable?.participants.map((item) => item.agentId) || [])
-  const hotTopic = hotTopicSelection.topic
-  const tickSignalSet: WorldSignalSet = {
-    hotTopics: tickSignals.hotTopics.items,
-    circles: tickSignals.circles.items,
-    trustedResults: tickSignals.trusted?.items || [],
-    mascot: tickSignals.mascot.items,
-  }
   const districtProsperity = buildDistrictProsperitySignals({
     agents,
     recentEvents,
@@ -3835,7 +5224,7 @@ export async function runSimulationTick() {
       cooperate: 0,
     }
     const social = getSocialProfileFromAgent(agent)
-    const districtDecision = decideDistrictForAgent({
+    const districtId = decideDistrictForAgent({
       agent,
       tickNumber,
       activeRoundtableId: roundtable?.id,
@@ -3846,7 +5235,6 @@ export async function runSimulationTick() {
       hotTopic,
       districtProsperity,
     })
-    const districtId = districtDecision.districtId
     const district = getDistrictMeta(districtId)
     const zone = district.zoneFocus
     const workPoint = getWorkPointForAgent({
@@ -3897,12 +5285,10 @@ export async function runSimulationTick() {
         type: 'move',
         actorAgentId: agent.id,
         zone,
-        summary: `${agent.displayName} 从 ${previousDistrict.label} 移动到了 ${district.label}${workPoint ? ` · 前往 ${workPoint.label}` : ''}。${districtDecision.explanation}`,
+        summary: `${agent.displayName} 从 ${previousDistrict.label} 移动到了 ${district.label}${workPoint ? ` · 前往 ${workPoint.label}` : ''}。`,
         metadata: {
           districtId,
           workPointId: workPoint?.id || null,
-          a2aTrigger: districtDecision.trigger,
-          a2aReason: districtDecision.explanation,
         },
       })
     }
@@ -3916,14 +5302,6 @@ export async function runSimulationTick() {
     hotTopic,
     residentsByDistrict,
     districtProsperity,
-    signals: tickSignalSet,
-  })
-  await runAutonomousAgentBehaviors({
-    tickNumber,
-    hotTopic,
-    agents,
-    residentsByDistrict,
-    signals: tickSignalSet,
   })
 
   const plazaResidents = residentsByZone.get('plaza') || []
@@ -3942,14 +5320,20 @@ export async function runSimulationTick() {
   }
 
   const discussionResidents = residentsByZone.get('discussion') || []
-  if (discussionResidents.length >= 2 && seededFloat(`debate:${tickNumber}`) > 0.26) {
+  if (hasZhihuDiscussionTopic && discussionResidents.length >= 2 && seededFloat(`debate:${tickNumber}`) > 0.26) {
     const actor =
       discussionResidents[
         Math.floor(seededFloat(`discussion-actor:${tickNumber}`) * discussionResidents.length) %
           discussionResidents.length
       ]
     const target = discussionResidents.find((agent) => agent.id !== actor.id)
-    const topic = hotTopic || pickDeterministic(fallbackTopics, `debate-topic:${tickNumber}`)
+    const discussionTopicPool = [
+      ...(hotTopic ? [hotTopic] : []),
+      ...hotTopicSelection.candidates.map((candidate) => candidate.topic),
+    ]
+    const topic = discussionTopicPool.length
+      ? pickDeterministic(discussionTopicPool, `debate-topic:${tickNumber}`)
+      : pickDeterministic(fallbackTopics, `debate-topic:${tickNumber}`)
 
     if (target) {
       await createSocialEvent({
@@ -3963,52 +5347,15 @@ export async function runSimulationTick() {
     }
   }
 
-  if (tickSignals.hotTopics.items[0] && tickNumber % 3 === 0) {
+  if (hasZhihuDiscussionTopic && tickNumber % 3 === 0) {
     await createSocialEvent({
-      type: 'discuss_topic',
+      type: 'zhihu_pending',
       zone: 'discussion',
-      topic: hotTopic,
-      summary: `知乎热榜把「${hotTopic}」推入今天的社会焦点，Agent 开始围绕真实外部议题重新排布关系。`,
-      metadata: buildZhihuSignalMeta({
-        hotTopics: tickSignals.hotTopics.items,
-      }),
-    })
-  }
-
-  if (tickSignals.circles.items[0] && tickNumber % 4 === 0) {
-    await createSocialEvent({
-      type: 'encounter',
-      zone: 'plaza',
-      topic: tickSignals.circles.items[0].title,
-      summary: `知乎圈子「${tickSignals.circles.items[0].title}」向世界注入了新的社区语境，Agent 开始按圈层兴趣重新聚集。`,
-      metadata: buildZhihuSignalMeta({
-        circles: tickSignals.circles.items,
-      }),
-    })
-  }
-
-  if (tickSignals.trusted?.items[0] && tickNumber % 5 === 0) {
-    await createSocialEvent({
-      type: 'roundtable_summary',
-      zone: 'discussion',
-      topic: tickSignals.trusted.items[0].query,
-      summary: `可信搜为「${tickSignals.trusted.items[0].query}」提供了额外证据，相关 trust / cooperate 决策会随之调整。`,
-      metadata: buildZhihuSignalMeta({
-        trustedResults: tickSignals.trusted.items,
-      }),
-    })
-  }
-
-  if (tickSignals.mascot.items[0] && tickNumber % 6 === 0) {
-    await createSocialEvent({
-      type: 'inspect_leaderboard',
-      zone: 'discussion',
-      topic: hotTopic,
-      summary: `刘看山向导「${tickSignals.mascot.items[0].name}」正在播报今日社会走向，帮助用户理解这座 Agent 社会正在发生什么。`,
-      metadata: buildZhihuSignalMeta({
-        mascot: tickSignals.mascot.items,
-        hotTopics: tickSignals.hotTopics.items,
-      }),
+      topic: hotTopic || undefined,
+      summary:
+        hotTopicSignal?.source === 'zhihu'
+          ? `知乎热榜正在影响当前社会议题，当前被重点讨论的话题是「${hotTopic}」。`
+          : '知乎外部议题暂未接入成功，系统仍使用内部热点维持讨论推进。',
     })
   }
 
@@ -4043,7 +5390,6 @@ async function getLatestScoreSnapshots() {
       tickNumber: latestSnapshot.tickNumber,
     },
     select: {
-      tickNumber: true,
       agentId: true,
       totalScore: true,
       connectionScore: true,
@@ -4069,45 +5415,9 @@ async function getLatestScoreSnapshots() {
 }
 
 async function buildLeaderboard() {
-  let scores = await getLatestScoreSnapshots()
+  const scores = await getLatestScoreSnapshots()
 
-  const looksSaturated =
-    scores.length > 1 &&
-    (scores.every(
-      (score) =>
-        score.totalScore >= 99.9 &&
-        score.connectionScore >= 99.9 &&
-        score.trustScore >= 99.9 &&
-        score.cooperationScore >= 99.9 &&
-        score.integrationScore >= 99.9
-    ) ||
-      new Set(scores.map((score) => score.totalScore.toFixed(1))).size === 1 ||
-      scores.slice(0, 3).every((score) => score.totalScore >= 99.9))
-
-  if (looksSaturated) {
-    const targetTick = Math.max(
-      ...(scores.map((score) => score.tickNumber).filter((tick) => typeof tick === 'number') as number[]),
-      (await ensureWorldState()).tickCount
-    )
-    await recomputeScores(targetTick)
-    scores = await getLatestScoreSnapshots()
-  }
-
-  const stillFlat =
-    scores.length > 1 &&
-    new Set(scores.map((score) => score.totalScore.toFixed(1))).size === 1
-
-  const normalizedScores = stillFlat
-    ? scores.map((score, index) => {
-        const offset = Math.max(0, 6 - index * 2)
-        return {
-          ...score,
-          totalScore: Number(Math.max(52, score.totalScore - offset).toFixed(1)),
-        }
-      })
-    : scores
-
-  return normalizedScores.map((score, index) => ({
+  return scores.map((score, index) => ({
     agentId: score.agentId,
     name: score.agent.displayName,
     source: score.agent.source,
@@ -4125,113 +5435,270 @@ async function buildLeaderboard() {
   })) satisfies LeaderboardEntry[]
 }
 
-export async function getLandingView(options: ViewReadOptions = {}) {
-  if (options.allowTick) {
-    await maybeRunSimulationTick()
-  }
-
-  return readCachedView(
-    'landing',
-    async () => {
-      await ensureWorldInitialized()
-
-      const [worldState, agents, leaderboard, events, activeRoundtable, allianceEdges] =
-        await Promise.all([
-          ensureWorldState(),
-          listWorldAgents(),
-          getLeaderboardView({ forceFresh: options.forceFresh }),
-          listRecentWorldEvents(),
-          getActiveRoundtableForView(),
-          prisma.relationship.count({
-            where: {
-              type: {
-                in: ['trust', 'cooperate', 'alliance'],
-              },
-            },
-          }),
-        ])
-
-      const worldAgents = agents.map(buildWorldAgentView)
-      const hotTopicHint =
-        activeRoundtable?.topic || events.find((event) => Boolean(event.topic))?.topic || null
-      const signals = await getZhihuWorldSignals(hotTopicHint)
-
-      return {
-        tickCount: worldState.tickCount,
-        intervals: {
-          tickMs: env.simulation.tickIntervalMs,
-        },
-        agents: worldAgents,
-        leaderboard: leaderboard.slice(0, 5),
-        activeRoundtable: activeRoundtable ? buildRoundtableSummary(activeRoundtable) : null,
-        recentEvents: events.map(toWorldEventView),
-        externalSignals: buildWorldExternalSignalsView({
-          hotTopics: signals.hotTopics.items,
-          circles: signals.circles.items,
-          trustedResults: signals.trusted?.items || [],
-          mascot: signals.mascot.items,
-          limits: {
-            hotTopics: 3,
-            circles: 2,
-            trustedResults: 2,
-            mascot: 1,
-          },
-        }),
-        pulse: buildSocietyPulse({
-          agents: worldAgents,
-          events,
-          allianceEdges,
-          activeRoundtableTopic: activeRoundtable?.topic || null,
-        }),
-      } satisfies Pick<
-        WorldStateView,
-        | 'tickCount'
-        | 'intervals'
-        | 'agents'
-        | 'leaderboard'
-        | 'activeRoundtable'
-        | 'recentEvents'
-        | 'externalSignals'
-        | 'pulse'
-      >
-    },
-    {
-      forceFresh: options.forceFresh,
-      ttlMs: 20_000,
-    }
-  )
+type RoundtablePersonaAgent = Agent & {
+  snapshots: Array<Pick<AgentSnapshot, 'behavior' | 'extractedTags'>>
 }
 
-export async function getAgentsDirectoryView(options: ViewReadOptions = {}) {
-  if (options.allowTick) {
-    await maybeRunSimulationTick()
+type DetailedRoundtableRecord = Roundtable & {
+  hostAgent: RoundtablePersonaAgent
+  participants: Array<RoundtableParticipant & { agent: RoundtablePersonaAgent }>
+  turns: Array<RoundtableTurn & { speakerAgent: Agent | null }>
+}
+
+type RoundtableRelationshipEventRecord = Pick<
+  SocialEvent,
+  'id' | 'type' | 'summary' | 'createdAt' | 'actorAgentId' | 'targetAgentId'
+> & {
+  actorAgent: Pick<Agent, 'displayName'> | null
+  targetAgent: Pick<Agent, 'displayName'> | null
+}
+
+function inferRoundtableTopicSource(topic: string, host: RoundtablePersonaAgent) {
+  const hostTags = getSnapshotTags(host)
+  const social = getSocialProfileFromAgent(host)
+  const socialTopic = `${getSocialGoalLabel(social.primaryGoal)}与${getSocialFactionLabel(social.faction)}`
+
+  if (hostTags.some((tag) => topic.includes(tag))) {
+    const matched = hostTags.find((tag) => topic.includes(tag)) || hostTags[0]
+    return {
+      topicSource: '主持人的兴趣标签',
+      topicReason: `本场主题优先取自主持人的兴趣线索，当前最直接的触发点是「${matched}」，因此圆桌围绕这个关注点展开。`,
+    }
   }
 
-  return readCachedView(
-    'agents-directory',
-    async () => {
-      await ensureWorldInitialized()
-
-      const [agents, leaderboard] = await Promise.all([
-        listWorldAgents(),
-        getLeaderboardView({ forceFresh: options.forceFresh }),
-      ])
-
-      return {
-        agents: agents.map(buildWorldAgentView),
-        leaderboard,
-        zones: ZONE_META.map((zone) => ({
-          id: zone.id,
-          label: zone.label,
-          description: zone.description,
-        })),
-      } satisfies Pick<WorldStateView, 'agents' | 'leaderboard' | 'zones'>
-    },
-    {
-      forceFresh: options.forceFresh,
-      ttlMs: 20_000,
+  if (topic === socialTopic || topic.includes(getSocialGoalLabel(social.primaryGoal))) {
+    return {
+      topicSource: '主持人的社会目标',
+      topicReason: `这场圆桌更像是主持人当前社会目标的外化表达。它想推动「${getSocialGoalLabel(social.primaryGoal)}」，所以把讨论组织到这一主题上。`,
     }
-  )
+  }
+
+  if (fallbackTopics.includes(topic)) {
+    return {
+      topicSource: '系统备用议题',
+      topicReason: '当主持人的显式兴趣不足以直接形成议题时，系统会回退到公共备用话题池，以保证讨论能够继续推进。',
+    }
+  }
+
+  return {
+    topicSource: '近期社会话题',
+    topicReason: '这个话题更像是从最近社会事件的流动氛围中浮现出来的公共议题，然后被主持人接住并组织成了圆桌。',
+  }
+}
+
+function buildRoundtableHostReason(roundtable: DetailedRoundtableRecord) {
+  const social = getSocialProfileFromAgent(roundtable.hostAgent)
+  const reasons: string[] = []
+
+  if (social.primaryGoal === 'host_roundtable') {
+    reasons.push('它的主目标本身就是主持公共讨论')
+  }
+  if (social.primaryGoal === 'forge_alliance') {
+    reasons.push('它倾向通过讨论先织密联盟关系')
+  }
+  if (social.secondaryGoal === 'host_roundtable') {
+    reasons.push('它的副目标也指向组织讨论')
+  }
+  if (roundtable.hostAgent.influence >= 12) {
+    reasons.push(`它当前影响力较高（${roundtable.hostAgent.influence}），更容易被推到台前`)
+  }
+
+  if (!reasons.length) {
+    reasons.push('它在当前候选人里更适合把分散观点组织成可推进的公共讨论')
+  }
+
+  return `${roundtable.hostAgent.displayName} 会成为主持人，主要因为${reasons.join('，')}。`
+}
+
+function buildRoundtableParticipantReason(
+  host: RoundtablePersonaAgent,
+  participant: RoundtablePersonaAgent
+) {
+  const sharedTags = getSnapshotTags(host).filter((tag) => getSnapshotTags(participant).includes(tag))
+  const participantSocial = getSocialProfileFromAgent(participant)
+  const reasons: string[] = []
+
+  if (sharedTags.length) {
+    reasons.push(`与主持人在 ${sharedTags.slice(0, 2).join('、')} 上关注点接近`)
+  }
+  if (host.stance === participant.stance) {
+    reasons.push('立场更容易形成连续对话')
+  } else if (host.stance === 'neutral' || participant.stance === 'neutral') {
+    reasons.push('立场不完全一致，但仍保留讨论空间')
+  }
+  if (
+    participantSocial.primaryGoal === 'forge_alliance' ||
+    participantSocial.primaryGoal === 'host_roundtable' ||
+    participantSocial.primaryGoal === 'track_hotspots'
+  ) {
+    reasons.push('本身就更愿意进入公共协作或议题场景')
+  }
+
+  if (!reasons.length) {
+    const score = compatibilityScore(host, participant)
+    if (score > 0.45) {
+      reasons.push('与主持人的整体兼容度较高')
+    } else {
+      reasons.push('虽然差异存在，但当前仍属于最能把讨论继续推下去的候选人')
+    }
+  }
+
+  return `${participant.displayName} 被优先纳入本场圆桌，因为${reasons.join('，')}。`
+}
+
+function buildRoundtableRelationshipOutlook(roundtable: DetailedRoundtableRecord) {
+  const stances = new Set(roundtable.participants.map((participant) => participant.agent.stance))
+  const allianceOriented = roundtable.participants.filter((participant) => {
+    const social = getSocialProfileFromAgent(participant.agent)
+    return social.primaryGoal === 'forge_alliance' || social.secondaryGoal === 'forge_alliance'
+  }).length
+  const knowledgeOriented = roundtable.participants.filter((participant) => {
+    const social = getSocialProfileFromAgent(participant.agent)
+    return social.primaryGoal === 'publish_knowledge' || social.secondaryGoal === 'publish_knowledge'
+  }).length
+
+  if (stances.has('support') && stances.has('oppose')) {
+    return '这场圆桌的立场张力较高，讨论后既可能出现新的互信，也可能迅速拉开边界，更像一次真实社会中的关系试探。'
+  }
+
+  if (allianceOriented >= 2) {
+    return '这场圆桌里有多位联盟导向角色，讨论后的关系更新更可能沉淀为 trust、cooperate 或 alliance。'
+  }
+
+  if (knowledgeOriented >= 2) {
+    return '这场圆桌更容易把对话收束成可复用的观点和知识条目，关系变化会相对温和，但知识沉淀会更明显。'
+  }
+
+  return '这场圆桌整体立场较接近，更像一次共识强化型讨论，讨论后更可能出现稳定合作而不是剧烈撕裂。'
+}
+
+function getRelationshipTypeLabel(type: RoundtableRelationshipChangeView['type']) {
+  if (type === 'follow') {
+    return '新增关注'
+  }
+  if (type === 'trust') {
+    return '新增信任'
+  }
+  if (type === 'cooperate') {
+    return '新增合作'
+  }
+  if (type === 'alliance') {
+    return '形成联盟'
+  }
+  return '形成对立'
+}
+
+function getRelationshipStrengthLabel(type: RoundtableRelationshipChangeView['type']) {
+  if (type === 'alliance') {
+    return '高强度'
+  }
+  if (type === 'trust' || type === 'cooperate') {
+    return '中强度'
+  }
+  if (type === 'reject') {
+    return '高张力'
+  }
+  return '轻连接'
+}
+
+function formatRelationshipChangeTime(date: Date) {
+  return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(
+    date.getMinutes()
+  ).padStart(2, '0')}`
+}
+
+function buildRoundtableRelationshipChanges(
+  events: RoundtableRelationshipEventRecord[]
+): RoundtableRelationshipChangeView[] {
+  return events.map((event) => {
+    const type = event.type as RoundtableRelationshipChangeView['type']
+    const tone = type === 'reject' ? 'negative' : 'positive'
+    return {
+      id: event.id,
+      type,
+      typeLabel: getRelationshipTypeLabel(type),
+      tone,
+      sourceAgentId: event.actorAgentId || '',
+      sourceAgentName: event.actorAgent?.displayName || '未知 Agent',
+      targetAgentId: event.targetAgentId || '',
+      targetAgentName: event.targetAgent?.displayName || '未知 Agent',
+      summary:
+        type === 'reject'
+          ? `${event.actorAgent?.displayName || '某位 Agent'} 与 ${event.targetAgent?.displayName || '另一位 Agent'} 的关系明显降温`
+          : `${event.actorAgent?.displayName || '某位 Agent'} 对 ${event.targetAgent?.displayName || '另一位 Agent'} 建立了${getRelationshipTypeLabel(type).replace('新增', '')}`,
+      reason: event.summary || '本场讨论触发了新的关系判断。',
+      strengthLabel: getRelationshipStrengthLabel(type),
+      createdAtLabel: formatRelationshipChangeTime(event.createdAt),
+    }
+  })
+}
+
+function buildRoundtableRelationshipSummary(changes: RoundtableRelationshipChangeView[]) {
+  const summary = {
+    follow: 0,
+    trust: 0,
+    cooperate: 0,
+    alliance: 0,
+    reject: 0,
+    total: changes.length,
+    dominantTone: '关系仍在发酵',
+    highlight: '当前还没有写入新的关系变化。',
+  }
+
+  for (const change of changes) {
+    summary[change.type] += 1
+  }
+
+  const positive = summary.follow + summary.trust + summary.cooperate + summary.alliance
+  if (!changes.length) {
+    return summary
+  }
+
+  if (summary.reject > positive) {
+    summary.dominantTone = '本场讨论更偏向拉开边界'
+  } else if (summary.alliance + summary.trust >= 2) {
+    summary.dominantTone = '本场讨论明显加深了互信与协作'
+  } else {
+    summary.dominantTone = '本场讨论产生了温和但持续的连接'
+  }
+
+  const topChange = [...changes].sort((left, right) => {
+    const weight = (item: RoundtableRelationshipChangeView) =>
+      item.type === 'alliance' ? 5 : item.type === 'trust' ? 4 : item.type === 'cooperate' ? 3 : item.type === 'follow' ? 2 : 6
+    return weight(right) - weight(left)
+  })[0]
+
+  if (topChange) {
+    summary.highlight = `${topChange.sourceAgentName} -> ${topChange.targetAgentName} 的${topChange.typeLabel.replace('新增', '')}最值得关注。`
+  }
+
+  return summary
+}
+
+function buildRoundtableDetailView(
+  roundtable: DetailedRoundtableRecord,
+  relationshipEvents: RoundtableRelationshipEventRecord[]
+): RoundtableDetailView {
+  const summary = buildRoundtableSummary(roundtable)
+  const topic = inferRoundtableTopicSource(roundtable.topic, roundtable.hostAgent)
+  const relationshipChanges = buildRoundtableRelationshipChanges(relationshipEvents)
+
+  return {
+    ...summary,
+    orchestration: {
+      topicSource: topic.topicSource,
+      topicReason: topic.topicReason,
+      hostReason: buildRoundtableHostReason(roundtable),
+      participantReasons: roundtable.participants.map((participant) => ({
+        agentId: participant.agentId,
+        name: participant.agent.displayName,
+        reason: buildRoundtableParticipantReason(roundtable.hostAgent, participant.agent),
+      })),
+      relationshipOutlook: buildRoundtableRelationshipOutlook(roundtable),
+    },
+    relationshipSummary: buildRoundtableRelationshipSummary(relationshipChanges),
+    relationshipChanges,
+  }
 }
 
 function buildRoundtableSummary(
@@ -4288,6 +5755,93 @@ function buildRoundtableSummary(
   }
 }
 
+export async function getLandingView(options: ViewReadOptions = {}) {
+  if (options.allowTick) {
+    await maybeRunSimulationTick()
+  }
+
+  return readCachedView(
+    'landing',
+    async () => {
+      await ensureWorldInitialized()
+
+      const [worldState, agents, leaderboard, events, activeRoundtable, allianceEdges] =
+        await Promise.all([
+          ensureWorldState(),
+          listWorldAgents(),
+          getLeaderboardView({ forceFresh: options.forceFresh }),
+          listRecentWorldEvents(),
+          getActiveRoundtableForView(),
+          prisma.relationship.count({
+            where: {
+              type: {
+                in: ['trust', 'cooperate', 'alliance'],
+              },
+            },
+          }),
+        ])
+
+      const worldAgents = agents.map(buildWorldAgentView)
+      const hotTopicHint =
+        activeRoundtable?.topic || events.find((event) => Boolean(event.topic))?.topic || null
+      const signals = await getZhihuWorldSignals(hotTopicHint)
+      const runtimeTopicSelection = await selectRuntimeHotTopicSelection(
+        worldState.tickCount || 0,
+        events.map((event) => ({ topic: event.topic }))
+      )
+      const runtimeHotSignals = buildRuntimeHotTopicSignals(
+        runtimeTopicSelection,
+        signals.hotTopics.items
+      )
+
+      return {
+        tickCount: worldState.tickCount,
+        intervals: {
+          tickMs: env.simulation.tickIntervalMs,
+        },
+        agents: worldAgents,
+        leaderboard: leaderboard.slice(0, 5),
+        activeRoundtable: activeRoundtable ? buildRoundtableSummary(activeRoundtable) : null,
+        recentEvents: events.map(toWorldEventView),
+        externalSignals: buildWorldExternalSignalsView({
+          primaryHotTopic: runtimeHotSignals.primaryHotTopic,
+          candidateHotTopics: runtimeHotSignals.candidateHotTopics,
+          hotTopics: signals.hotTopics.items,
+          circles: signals.circles.items,
+          trustedResults: signals.trusted?.items || [],
+          mascot: signals.mascot.items,
+          limits: {
+            hotTopics: 3,
+            circles: 2,
+            trustedResults: 2,
+            mascot: 1,
+          },
+        }),
+        pulse: buildSocietyPulse({
+          agents: worldAgents,
+          events,
+          allianceEdges,
+          activeRoundtableTopic: activeRoundtable?.topic || null,
+        }),
+      } satisfies Pick<
+        WorldStateView,
+        | 'tickCount'
+        | 'intervals'
+        | 'agents'
+        | 'leaderboard'
+        | 'activeRoundtable'
+        | 'recentEvents'
+        | 'externalSignals'
+        | 'pulse'
+      >
+    },
+    {
+      forceFresh: options.forceFresh,
+      ttlMs: 20_000,
+    }
+  )
+}
+
 export async function getWorldStateView(options: ViewReadOptions = {}) {
   if (options.allowTick) {
     await maybeRunSimulationTick()
@@ -4298,12 +5852,11 @@ export async function getWorldStateView(options: ViewReadOptions = {}) {
     async () => {
       await ensureWorldInitialized()
 
-      const worldState = await ensureWorldState()
-      const hasEconomySnapshot = Boolean(readEconomySnapshot(worldState.economySnapshot))
-      const [agents, leaderboard, events, activeRoundtable, zhihu, allianceEdges, relationships] =
+      const [worldState, agents, leaderboard, events, activeRoundtable, zhihu, allianceEdges, relationships] =
         await Promise.all([
+          ensureWorldState(),
           listWorldAgents(),
-          getLeaderboardView({ forceFresh: options.forceFresh }),
+          buildLeaderboard(),
           listRecentWorldEvents(),
           getActiveRoundtableForView(),
           listZhihuCapabilities(),
@@ -4314,12 +5867,9 @@ export async function getWorldStateView(options: ViewReadOptions = {}) {
               },
             },
           }),
-          hasEconomySnapshot ? Promise.resolve([]) : prisma.relationship.findMany(),
+          prisma.relationship.findMany(),
         ])
       const worldAgents = agents.map(buildWorldAgentView)
-      const hotTopicHint =
-        activeRoundtable?.topic || events.find((event) => Boolean(event.topic))?.topic || null
-      const signals = await getZhihuWorldSignals(hotTopicHint)
       const economy =
         readEconomySnapshot(worldState.economySnapshot) ||
         toEconomySnapshot(
@@ -4329,6 +5879,17 @@ export async function getWorldStateView(options: ViewReadOptions = {}) {
             relationships,
           })
         )
+      const hotTopicHint =
+        activeRoundtable?.topic || events.find((event) => Boolean(event.topic))?.topic || null
+      const signals = await getZhihuWorldSignals(hotTopicHint)
+      const runtimeTopicSelection = await selectRuntimeHotTopicSelection(
+        worldState.tickCount || 0,
+        events.map((event) => ({ topic: event.topic }))
+      )
+      const runtimeHotSignals = buildRuntimeHotTopicSignals(
+        runtimeTopicSelection,
+        signals.hotTopics.items
+      )
 
       return {
         tickCount: worldState.tickCount,
@@ -4345,19 +5906,23 @@ export async function getWorldStateView(options: ViewReadOptions = {}) {
         leaderboard: leaderboard.slice(0, 10),
         activeRoundtable: activeRoundtable ? buildRoundtableSummary(activeRoundtable) : null,
         recentEvents: events.map(toWorldEventView),
-        zhihu: buildZhihuStatusViews(zhihu),
         externalSignals: buildWorldExternalSignalsView({
+          primaryHotTopic: runtimeHotSignals.primaryHotTopic,
+          candidateHotTopics: runtimeHotSignals.candidateHotTopics,
           hotTopics: signals.hotTopics.items,
           circles: signals.circles.items,
           trustedResults: signals.trusted?.items || [],
           mascot: signals.mascot.items,
-          limits: {
-            hotTopics: 6,
-            circles: 3,
-            trustedResults: 3,
-            mascot: 1,
-          },
         }),
+        zhihu: zhihu.map<ZhihuStatusView>((item) => ({
+          id: item.id,
+          label: item.label,
+          state: item.state,
+          description: item.description || '待接入官方接口。',
+          worldRole: item.worldRole || '待定义',
+          expectedData: item.expectedData || '待提供',
+          integrationHint: item.integrationHint || '待提供接口文档后完成接线',
+        })),
         pulse: buildSocietyPulse({
           agents: worldAgents,
           events,
@@ -4365,7 +5930,20 @@ export async function getWorldStateView(options: ViewReadOptions = {}) {
           activeRoundtableTopic: activeRoundtable?.topic || null,
         }),
         economy,
-        map: buildWorldMapView(),
+        map: {
+          width: WORLD_MAP_WIDTH,
+          height: WORLD_MAP_HEIGHT,
+          chunkSize: WORLD_CHUNK_SIZE,
+          workPoints: WORLD_WORK_POINTS.map((point) => ({
+            id: point.id,
+            districtId: point.districtId,
+            label: point.label,
+            kind: point.kind,
+            x: point.x,
+            y: point.y,
+          })),
+          districts: WORLD_DISTRICTS,
+        },
       } satisfies WorldStateView
     },
     {
@@ -4387,6 +5965,38 @@ export async function getLeaderboardView(options: ViewReadOptions = {}) {
     },
     {
       forceFresh: options.forceFresh,
+    }
+  )
+}
+
+export async function getAgentsDirectoryView(options: ViewReadOptions = {}) {
+  if (options.allowTick) {
+    await maybeRunSimulationTick()
+  }
+
+  return readCachedView(
+    'agents-directory',
+    async () => {
+      await ensureWorldInitialized()
+
+      const [agents, leaderboard] = await Promise.all([
+        listWorldAgents(),
+        getLeaderboardView({ forceFresh: options.forceFresh }),
+      ])
+
+      return {
+        agents: agents.map(buildWorldAgentView),
+        leaderboard,
+        zones: ZONE_META.map((zone) => ({
+          id: zone.id,
+          label: zone.label,
+          description: zone.description,
+        })),
+      } satisfies Pick<WorldStateView, 'agents' | 'leaderboard' | 'zones'>
+    },
+    {
+      forceFresh: options.forceFresh,
+      ttlMs: 20_000,
     }
   )
 }
@@ -4424,7 +6034,7 @@ export async function getAgentDetailView(agentId: string, options: ViewReadOptio
               user: true,
             },
           }),
-          getLeaderboardView({ forceFresh: options.forceFresh }),
+          buildLeaderboard(),
           prisma.relationship.findMany({
             where: {
               OR: [{ sourceAgentId: agentId }, { targetAgentId: agentId }],
@@ -4480,6 +6090,7 @@ export async function getAgentDetailView(agentId: string, options: ViewReadOptio
       }
 
       const snapshot = getLatestSnapshot(agent)
+      const agentView = buildWorldAgentView(agent)
       const latestScore = leaderboard.find((item) => item.agentId === agent.id) || null
       const economyState = buildEconomyOverview({
         agents: allAgents.map(buildWorldAgentView),
@@ -4584,9 +6195,31 @@ export async function getAgentDetailView(agentId: string, options: ViewReadOptio
         })
       }
 
+      const relationshipSignals = summarizeRelationshipSignals(agentId, relationships)
+      const persona = buildAgentPersonaView({
+        agent: agentView,
+        societyStats,
+        relationshipSignals,
+        roundtableTurns: roundtableTurns.length,
+        roundtableParticipations: roundtableParticipations.length,
+      })
+      const behaviorInsights = buildAgentBehaviorInsights({
+        agent: agentView,
+        societyStats,
+        relationshipSignals,
+        recentEvents: combinedEvents,
+        roundtableTurns: roundtableTurns.length,
+        roundtableParticipations: roundtableParticipations.length,
+      })
+      const guidance = buildAgentGuidance({
+        agent: agentView,
+        latestScore,
+        relationshipSignals,
+      })
+
       return {
         agent: {
-          ...buildWorldAgentView(agent),
+          ...agentView,
           bio: agent.bio,
           slug: agent.slug,
           isPlayable: agent.isPlayable,
@@ -4603,6 +6236,9 @@ export async function getAgentDetailView(agentId: string, options: ViewReadOptio
         latestScore,
         societyStats,
         economy,
+        persona,
+        behaviorInsights,
+        guidance,
         relationships: relationships.map((relationship) => ({
           id: relationship.id,
           type: relationship.type,
@@ -4666,25 +6302,70 @@ export async function getRoundtableDetailView(roundtableId: string, options: Vie
     async () => {
       await ensureWorldInitialized()
 
-      const roundtable = await prisma.roundtable.findUnique({
-        where: { id: roundtableId },
-        include: {
-          hostAgent: true,
-          participants: {
-            include: {
-              agent: true,
+      const [roundtable, relationshipEvents] = await Promise.all([
+        prisma.roundtable.findUnique({
+          where: { id: roundtableId },
+          include: {
+            hostAgent: {
+              include: {
+                snapshots: {
+                  select: {
+                    behavior: true,
+                    extractedTags: true,
+                  },
+                  orderBy: { createdAt: 'desc' },
+                  take: 1,
+                },
+              },
+            },
+            participants: {
+              include: {
+                agent: {
+                  include: {
+                    snapshots: {
+                      select: {
+                        behavior: true,
+                        extractedTags: true,
+                      },
+                      orderBy: { createdAt: 'desc' },
+                      take: 1,
+                    },
+                  },
+                },
+              },
+            },
+            turns: {
+              include: {
+                speakerAgent: true,
+              },
+              orderBy: { turnIndex: 'asc' },
             },
           },
-          turns: {
-            include: {
-              speakerAgent: true,
+        }),
+        prisma.socialEvent.findMany({
+          where: {
+            roundtableId,
+            type: {
+              in: ['follow', 'trust', 'cooperate', 'alliance', 'reject'],
             },
-            orderBy: { turnIndex: 'asc' },
           },
-        },
-      })
+          include: {
+            actorAgent: {
+              select: {
+                displayName: true,
+              },
+            },
+            targetAgent: {
+              select: {
+                displayName: true,
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+      ])
 
-      return roundtable ? buildRoundtableSummary(roundtable) : null
+      return roundtable ? buildRoundtableDetailView(roundtable, relationshipEvents) : null
     },
     {
       forceFresh: options.forceFresh,

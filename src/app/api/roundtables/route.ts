@@ -5,6 +5,6 @@ export const dynamic = 'force-dynamic'
 
 export async function GET() {
   return NextResponse.json({
-    roundtables: await getRoundtableListView(),
+    roundtables: await getRoundtableListView({ forceFresh: true }),
   })
 }

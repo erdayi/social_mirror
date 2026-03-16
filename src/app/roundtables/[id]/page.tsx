@@ -46,6 +46,92 @@ function Badge({ value, meta }: { value: string; meta: Record<string, { label: s
   )
 }
 
+function RelationshipChangesPanel({
+  roundtable,
+}: {
+  roundtable: NonNullable<Awaited<ReturnType<typeof getRoundtableDetailView>>>
+}) {
+  return (
+    <div className="world-card p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="pixel-label text-[#72e7ff]">关系变化</p>
+          <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.78)]">
+            {roundtable.relationshipSummary.dominantTone}
+          </p>
+        </div>
+        <span className="pixel-inline-badge">变化 {roundtable.relationshipSummary.total}</span>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        {[
+          ['关注', roundtable.relationshipSummary.follow],
+          ['信任', roundtable.relationshipSummary.trust],
+          ['合作', roundtable.relationshipSummary.cooperate],
+          ['联盟', roundtable.relationshipSummary.alliance],
+          ['对立', roundtable.relationshipSummary.reject],
+        ].map(([label, value]) => (
+          <div
+            key={label}
+            className="rounded-[20px] border border-[rgba(126,113,186,0.24)] bg-[rgba(31,23,46,0.92)] px-4 py-3"
+          >
+            <p className="text-xs font-semibold text-[rgba(249,233,199,0.68)]">{label}</p>
+            <p className="mt-2 text-lg font-black text-[#ffe08f]">{value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 rounded-[20px] border border-[rgba(124,218,255,0.2)] bg-[rgba(27,36,58,0.86)] px-4 py-4">
+        <p className="text-xs font-black text-[#72e7ff]">关键变化</p>
+        <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+          {roundtable.relationshipSummary.highlight}
+        </p>
+      </div>
+
+      {roundtable.relationshipChanges.length ? (
+        <div className="mt-4 space-y-3">
+          {roundtable.relationshipChanges.map((change) => (
+            <div key={change.id} className="pixel-chat-line">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold ${
+                    change.tone === 'negative'
+                      ? 'border-[rgba(167,98,122,0.24)] bg-[rgba(84,37,57,0.92)] text-[#ffb8cb]'
+                      : 'border-[rgba(124,218,255,0.24)] bg-[rgba(31,44,78,0.84)] text-[#72e7ff]'
+                  }`}
+                >
+                  {change.typeLabel}
+                </span>
+                <span className="pixel-inline-badge">{change.strengthLabel}</span>
+                <span className="text-xs font-semibold text-[rgba(249,233,199,0.58)]">
+                  {change.createdAtLabel}
+                </span>
+              </div>
+              <p className="mt-3 text-sm font-black text-[#ffe9ae]">{change.summary}</p>
+              <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+                {change.reason}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-[rgba(249,233,199,0.68)]">
+                <Link href={`/agents/${change.sourceAgentId}`} className="pixel-link">
+                  {change.sourceAgentName}
+                </Link>
+                <span>→</span>
+                <Link href={`/agents/${change.targetAgentId}`} className="pixel-link">
+                  {change.targetAgentName}
+                </Link>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-4 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.72)]">
+          这场圆桌还没有写入新的关系变化，可能仍在讨论中，也可能这次的结果更温和。
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default async function RoundtableDetailPage({
   params,
 }: {
@@ -141,6 +227,35 @@ export default async function RoundtableDetailPage({
           </div>
 
           <div className="world-card p-5">
+            <p className="pixel-label text-[#72e7ff]">组局逻辑</p>
+            <div className="mt-4 space-y-3">
+              <div className="pixel-chat-line">
+                <p className="text-sm font-black text-[#ffe9ae]">话题来源：{roundtable.orchestration.topicSource}</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+                  {roundtable.orchestration.topicReason}
+                </p>
+              </div>
+              <div className="pixel-chat-line">
+                <p className="text-sm font-black text-[#ffe9ae]">为什么由 {roundtable.hostName} 主持</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+                  {roundtable.orchestration.hostReason}
+                </p>
+              </div>
+              {roundtable.orchestration.participantReasons.map((participant) => (
+                <div key={participant.agentId} className="pixel-chat-line">
+                  <p className="text-sm font-black text-[#ffe9ae]">为什么选中 {participant.name}</p>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+                    {participant.reason}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <p className="mt-4 text-xs font-semibold leading-6 text-[rgba(114,231,255,0.82)]">
+              关系走势：{roundtable.orchestration.relationshipOutlook}
+            </p>
+          </div>
+
+          <div className="world-card p-5">
             <p className="pixel-label text-[#72e7ff]">圆桌总结</p>
             <p className="mt-3 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
               {roundtable.summary || '当前尚未生成总结，等待讨论进入 summary 阶段。'}
@@ -166,7 +281,10 @@ export default async function RoundtableDetailPage({
           </div>
         </div>
 
-        <div className="world-card p-5">
+        <div className="space-y-6">
+          <RelationshipChangesPanel roundtable={roundtable} />
+
+          <div className="world-card p-5">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="pixel-label text-[#72e7ff]">圆桌场景</p>
@@ -219,6 +337,7 @@ export default async function RoundtableDetailPage({
                 ) : null}
               </div>
             ))}
+          </div>
           </div>
         </div>
       </section>

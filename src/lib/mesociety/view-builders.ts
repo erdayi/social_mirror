@@ -37,6 +37,8 @@ export function buildZhihuStatusViews(zhihu: ZhihuCapabilityLike[]) {
 }
 
 export function buildWorldExternalSignalsView(input: {
+  primaryHotTopic?: ZhihuHotSignalView | null
+  candidateHotTopics?: ZhihuHotSignalView[]
   hotTopics: ZhihuHotSignalView[]
   circles: ZhihuCircleSignalView[]
   trustedResults: ZhihuTrustedSignalView[]
@@ -49,6 +51,11 @@ export function buildWorldExternalSignalsView(input: {
   }
 }): WorldStateView['externalSignals'] {
   return {
+    primaryHotTopic: input.primaryHotTopic || null,
+    candidateHotTopics: (input.candidateHotTopics || []).slice(
+      0,
+      input.limits?.hotTopics || (input.candidateHotTopics || []).length
+    ),
     hotTopics: input.hotTopics.slice(0, input.limits?.hotTopics || input.hotTopics.length),
     circles: input.circles.slice(0, input.limits?.circles || input.circles.length),
     trustedResults: input.trustedResults.slice(

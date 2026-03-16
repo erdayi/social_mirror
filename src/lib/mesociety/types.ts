@@ -88,6 +88,26 @@ export type WorldEventView = {
   metadata?: Record<string, unknown> | null
 }
 
+export type SocialPersonaView = {
+  archetype: string
+  summary: string
+  values: string[]
+  socialStyle: string
+  trustStyle: string
+  conflictStyle: string
+  participationStyle: string
+}
+
+export type BehaviorInsightView = {
+  title: string
+  detail: string
+}
+
+export type SocialGuidanceView = {
+  title: string
+  detail: string
+}
+
 export type AgentSocietyStats = {
   productionScore: number
   resourceScore: number
@@ -240,6 +260,8 @@ export type WorldStateView = {
   recentEvents: WorldEventView[]
   zhihu: ZhihuStatusView[]
   externalSignals: {
+    primaryHotTopic: ZhihuHotSignalView | null
+    candidateHotTopics: ZhihuHotSignalView[]
     hotTopics: ZhihuHotSignalView[]
     circles: ZhihuCircleSignalView[]
     trustedResults: ZhihuTrustedSignalView[]
@@ -289,6 +311,9 @@ export type AgentDetailView = {
   latestScore: LeaderboardEntry | null
   societyStats: AgentSocietyStats
   economy: AgentEconomyView
+  persona: SocialPersonaView
+  behaviorInsights: BehaviorInsightView[]
+  guidance: SocialGuidanceView[]
   relationships: Array<{
     id: string
     type: string
@@ -297,6 +322,44 @@ export type AgentDetailView = {
     targetName: string
   }>
   recentEvents: WorldEventView[]
+}
+
+export type RoundtableOrchestrationView = {
+  topicSource: string
+  topicReason: string
+  hostReason: string
+  participantReasons: Array<{
+    agentId: string
+    name: string
+    reason: string
+  }>
+  relationshipOutlook: string
+}
+
+export type RoundtableRelationshipChangeView = {
+  id: string
+  type: 'follow' | 'trust' | 'cooperate' | 'alliance' | 'reject'
+  typeLabel: string
+  tone: 'positive' | 'negative'
+  sourceAgentId: string
+  sourceAgentName: string
+  targetAgentId: string
+  targetAgentName: string
+  summary: string
+  reason: string
+  strengthLabel: string
+  createdAtLabel: string
+}
+
+export type RoundtableRelationshipSummaryView = {
+  follow: number
+  trust: number
+  cooperate: number
+  alliance: number
+  reject: number
+  total: number
+  dominantTone: string
+  highlight: string
 }
 
 export type RoundtableSummary = {
@@ -336,6 +399,12 @@ export type RoundtableSummary = {
     audioUrl: string | null
     createdAt: string
   }>
+}
+
+export type RoundtableDetailView = RoundtableSummary & {
+  orchestration: RoundtableOrchestrationView
+  relationshipSummary: RoundtableRelationshipSummaryView
+  relationshipChanges: RoundtableRelationshipChangeView[]
 }
 
 export type GraphView = {

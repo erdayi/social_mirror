@@ -195,6 +195,47 @@ export default async function AgentDetailPage({
           </div>
 
           <div className="world-card p-5">
+            <p className="pixel-label text-[#72e7ff]">社会人格画像</p>
+            <h2 className="pixel-title mt-2 text-lg">{detail.persona.archetype}</h2>
+            <p className="mt-3 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+              {detail.persona.summary}
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {detail.persona.values.map((value) => (
+                <span key={value} className="pixel-inline-badge">
+                  {value}
+                </span>
+              ))}
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <div className="pixel-chat-line">
+                <p className="text-xs font-black text-[#72e7ff]">社交方式</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+                  {detail.persona.socialStyle}
+                </p>
+              </div>
+              <div className="pixel-chat-line">
+                <p className="text-xs font-black text-[#72e7ff]">信任偏好</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+                  {detail.persona.trustStyle}
+                </p>
+              </div>
+              <div className="pixel-chat-line">
+                <p className="text-xs font-black text-[#72e7ff]">冲突处理</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+                  {detail.persona.conflictStyle}
+                </p>
+              </div>
+              <div className="pixel-chat-line">
+                <p className="text-xs font-black text-[#72e7ff]">参与倾向</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+                  {detail.persona.participationStyle}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="world-card p-5">
             <div className="flex items-center justify-between gap-3">
               <p className="pixel-label text-[#72e7ff]">最近关系</p>
               <Link href="/graph" className="pixel-link">
@@ -253,6 +294,35 @@ export default async function AgentDetailPage({
             <p className="landing-subtle-text mt-4">
               这组指标会随着 Agent 的岗位行动、关系边强度、圆桌参与和热议主题互动持续变化。
             </p>
+          </div>
+
+          <div className="world-card p-5">
+            <p className="pixel-label text-[#72e7ff]">行为解释与调整建议</p>
+            <div className="mt-4 space-y-3">
+              {detail.behaviorInsights.map((insight) => (
+                <div key={insight.title} className="pixel-chat-line">
+                  <p className="text-sm font-black text-[#ffe9ae]">{insight.title}</p>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+                    {insight.detail}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-5">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-[#72e7ff]">
+                HOW TO IMPROVE
+              </p>
+            </div>
+            <div className="mt-3 space-y-3">
+              {detail.guidance.map((item) => (
+                <div key={item.title} className="event-card">
+                  <p className="text-sm font-black text-[#ffe9ae]">{item.title}</p>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+                    {item.detail}
+                  </p>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="world-card p-5">

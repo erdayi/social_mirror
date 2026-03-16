@@ -16,98 +16,83 @@ function getWorldSignature(world: WorldStateView) {
     world.activeRoundtable?.id || 'none',
     world.activeRoundtable?.turns[world.activeRoundtable.turns.length - 1]?.id || 'none',
     world.recentEvents[0]?.id || 'none',
+    world.externalSignals.primaryHotTopic?.title || 'none',
+    world.externalSignals.candidateHotTopics.map((item) => item.title).join('|') || 'none',
     world.externalSignals.hotTopics[0]?.id || 'none',
     world.externalSignals.circles[0]?.id || 'none',
   ].join(':')
 }
 
-export async function GET() {
+async function* worldEventGenerator() {
   await ensureAutoSimulationRunner()
-  let tickTimer: NodeJS.Timeout | undefined
-  let keepAliveTimer: NodeJS.Timeout | undefined
-  let sending = false
+
   let lastTickCount = -1
   let lastSignature = ''
   let previousWorld: WorldStateView | null = null
 
+  const sendWorld = async (force: boolean) => {
+    if (!force) {
+      const worldState = await prisma.worldState.findUnique({
+        where: { id: 1 },
+        select: { tickCount: true },
+      })
+
+      if (worldState && worldState.tickCount === lastTickCount) {
+        return null
+      }
+    }
+
+    const world = await getWorldStateView({ forceFresh: true })
+    const nextSignature = getWorldSignature(world)
+    if (!force && nextSignature === lastSignature) {
+      return null
+    }
+
+    lastTickCount = world.tickCount
+    lastSignature = nextSignature
+
+    const messages: string[] = []
+    for (const event of buildWorldStreamEvents(previousWorld, world)) {
+      messages.push(`event: ${event.type}\ndata: ${JSON.stringify(event.payload)}\n\n`)
+    }
+    messages.push(`event: world\ndata: ${JSON.stringify(world)}\n\n`)
+    previousWorld = world
+    return messages.join('')
+  }
+
+  // Send initial state
+  const initial = await sendWorld(true)
+  if (initial) {
+    yield encoder.encode(initial)
+  }
+
+  // Poll for changes
+  while (true) {
+    await new Promise((resolve) => setTimeout(resolve, 5_000))
+
+    const update = await sendWorld(false)
+    if (update) {
+      yield encoder.encode(update)
+    }
+
+    // Send keep-alive periodically
+    yield encoder.encode(': keep-alive\n\n')
+  }
+}
+
+export async function GET() {
+  const iterator = worldEventGenerator()
   const stream = new ReadableStream({
-    async start(controller) {
-      const sendWorld = async (force = false) => {
-        if (!force) {
-          const worldState = await prisma.worldState.findUnique({
-            where: { id: 1 },
-            select: { tickCount: true },
-          })
-
-          if (worldState && worldState.tickCount === lastTickCount) {
-            return
-          }
-        }
-
-        const world = await getWorldStateView()
-        const nextSignature = getWorldSignature(world)
-        if (!force && nextSignature === lastSignature) {
-          return
-        }
-
-        lastTickCount = world.tickCount
-        lastSignature = nextSignature
-        for (const event of buildWorldStreamEvents(previousWorld, world)) {
-          controller.enqueue(
-            encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event.payload)}\n\n`)
-          )
-        }
-        controller.enqueue(
-          encoder.encode(`event: world\ndata: ${JSON.stringify(world)}\n\n`)
-        )
-        previousWorld = world
+    async pull(controller) {
+      const { value, done } = await iterator.next()
+      if (done) {
+        controller.close()
+      } else {
+        controller.enqueue(value)
       }
-
-      const close = () => {
-        if (tickTimer) {
-          clearInterval(tickTimer)
-        }
-
-        if (keepAliveTimer) {
-          clearInterval(keepAliveTimer)
-        }
-      }
-
-      await sendWorld(true)
-
-      tickTimer = setInterval(async () => {
-        if (sending) {
-          return
-        }
-
-        sending = true
-        try {
-          await sendWorld()
-        } catch (error) {
-          controller.enqueue(
-            encoder.encode(
-              `event: error\ndata: ${JSON.stringify({ message: 'world stream failed', error: String(error) })}\n\n`
-            )
-          )
-        } finally {
-          sending = false
-        }
-      }, 5_000)
-
-      keepAliveTimer = setInterval(() => {
-        controller.enqueue(encoder.encode(': keep-alive\n\n'))
-      }, 15_000)
-
-      return close
     },
     cancel() {
-      if (tickTimer) {
-        clearInterval(tickTimer)
-      }
-
-      if (keepAliveTimer) {
-        clearInterval(keepAliveTimer)
-      }
+      iterator.return?.()
     },
   })
 
