@@ -4,7 +4,7 @@ import { SecondMeLoginOrb } from '@/components/mesociety/secondme-login-orb'
 import { WorldAgentSprite } from '@/components/mesociety/world-agent-sprite'
 import { getCurrentUser } from '@/lib/auth'
 import { hasSecondMeCredentials } from '@/lib/env'
-import { getSessionView, getWorldStateView } from '@/lib/mesociety/simulation'
+import { getLandingView, getSessionView } from '@/lib/mesociety/simulation'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,7 +23,7 @@ export default async function LoginPage({
   }
 }) {
   const user = await getCurrentUser()
-  const [session, world] = await Promise.all([getSessionView(user), getWorldStateView()])
+  const [session, world] = await Promise.all([getSessionView(user), getLandingView()])
   const featuredAgents = world.agents.slice(0, 5)
   const errorMessage =
     searchParams?.message ||
@@ -37,7 +37,7 @@ export default async function LoginPage({
         <header className="login-page-topbar">
           <Link href="/" className="global-home-link">
             <span className="global-home-chip">HOME</span>
-            <span className="pixel-brand">MeSociety</span>
+            <span className="pixel-brand">SocialMirror</span>
           </Link>
           <div className="flex flex-wrap items-center gap-3">
             <span className="pixel-pill">SecondMe Official OAuth</span>
@@ -56,6 +56,11 @@ export default async function LoginPage({
             <p className="login-story-copy">
               点击中心球体，直接跳转到 SecondMe 官方登录。登录成功后，你的 Agent 会接入这个开放世界，自动参与社交、圆桌、热议与关系图谱演化。
             </p>
+            <div className="flex flex-wrap gap-2">
+              <span className="landing-chip">官方 OAuth</span>
+              <span className="landing-chip">真实记忆建档</span>
+              <span className="landing-chip">加入自治社会</span>
+            </div>
 
             {errorMessage ? <div className="pixel-empty">{errorMessage}</div> : null}
             {!hasCredentials ? (

@@ -35,9 +35,9 @@ export function GlobalNav({ session }: Props) {
         <div className="global-nav-primary">
           <Link href="/" className="global-home-link">
             <span className="global-home-chip">HOME</span>
-            <span className="pixel-brand">MeSociety</span>
+            <span className="pixel-brand">SocialMirror</span>
           </Link>
-          <span className="global-nav-copy">My Society · Agent to Agent 社会实验</span>
+          <span className="global-nav-copy">SocialMirror · Agent to Agent 社会实验</span>
         </div>
 
         <nav className="global-nav-links">
