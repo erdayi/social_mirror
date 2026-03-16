@@ -247,16 +247,54 @@ img {
   }
 
   .brand-badge {
-    border: 1px solid rgba(126, 113, 186, 0.24);
+    height: 36px;
+    width: auto;
+    border: 1px solid rgba(126, 113, 186, 0.18);
+    border-radius: 14px;
+    background: rgba(31, 23, 46, 0.66);
+    box-shadow: 0 3px 0 rgba(18, 13, 28, 0.52);
+    object-fit: contain;
+    opacity: 0.88;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+  }
+
+  .brand-badge:hover {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+
+  .brand-rail {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid rgba(126, 113, 186, 0.16);
     border-radius: 16px;
-    background: rgba(31, 23, 46, 0.82);
-    box-shadow: 0 4px 0 rgba(18, 13, 28, 0.72);
+    background: rgba(24, 18, 37, 0.42);
+  }
+
+  .landing-ecosystem-rail {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    padding: 6px 8px;
+    border: 1px solid rgba(126, 113, 186, 0.16);
+    border-radius: 16px;
+    background: rgba(24, 18, 37, 0.38);
   }
 
   .global-nav-links {
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+    flex-wrap: nowrap;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .global-nav-links::-webkit-scrollbar {
+    display: none;
   }
 
   .global-nav-meta {
@@ -359,7 +397,8 @@ img {
   }
 
   .pixel-nav {
-    @apply rounded-2xl border px-4 py-2 text-sm font-bold transition;
+    @apply rounded-2xl border px-3 py-2 text-[13px] font-bold transition;
+    white-space: nowrap;
     border-color: rgba(126, 113, 186, 0.28);
     background: rgba(45, 34, 69, 0.9);
     color: #f9e9c7;
@@ -1831,9 +1870,14 @@ img {
     height: 500px;
     border: 4px solid rgba(114, 231, 255, 0.26);
     border-radius: 999px;
+    background:
+      radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.12), transparent 22%),
+      radial-gradient(circle at 72% 68%, rgba(91, 200, 255, 0.12), transparent 18%),
+      radial-gradient(circle at 50% 50%, rgba(114, 231, 255, 0.04), transparent 62%);
     box-shadow:
       0 0 0 12px rgba(114, 231, 255, 0.08),
-      0 0 0 28px rgba(114, 231, 255, 0.04);
+      0 0 0 28px rgba(114, 231, 255, 0.04),
+      inset 0 -18px 36px rgba(10, 20, 38, 0.38);
   }
 
   .pixel-globe-grid {
@@ -1846,10 +1890,13 @@ img {
     padding: 18px;
     border: 4px solid rgba(124, 218, 255, 0.28);
     border-radius: 24px;
-    background: rgba(18, 28, 48, 0.88);
+    background:
+      linear-gradient(180deg, rgba(31, 48, 78, 0.92), rgba(18, 28, 48, 0.9)),
+      rgba(18, 28, 48, 0.88);
     box-shadow:
       0 10px 0 rgba(18, 13, 28, 0.74),
-      0 0 0 8px rgba(114, 231, 255, 0.06);
+      0 0 0 8px rgba(114, 231, 255, 0.06),
+      inset 0 0 24px rgba(255, 255, 255, 0.05);
   }
 
   .pixel-globe-cell {
@@ -1890,13 +1937,15 @@ img {
     inset: auto 50% 42px auto;
     transform: translateX(50%);
     z-index: 3;
-    min-width: 180px;
-    padding: 10px 16px;
+    min-width: 420px;
+    max-width: 520px;
+    padding: 10px 18px;
     border: 3px solid rgba(255, 224, 143, 0.34);
     border-radius: 18px;
     background: rgba(43, 29, 60, 0.94);
     text-align: center;
     box-shadow: 0 6px 0 rgba(18, 13, 28, 0.72);
+    white-space: nowrap;
   }
 
   .landing-agent-node {
@@ -1920,12 +1969,16 @@ img {
   .landing-connection {
     position: absolute;
     z-index: 1;
-    background: rgba(114, 231, 255, 0.46);
+    background: rgba(114, 231, 255, 0.18);
     image-rendering: pixelated;
+    border-radius: 999px;
   }
 
   .landing-feed-card {
     @apply flex flex-col gap-4;
+    background:
+      linear-gradient(180deg, rgba(37, 27, 56, 0.98), rgba(24, 18, 42, 0.96)),
+      rgba(34, 25, 50, 0.92);
   }
 
   .landing-feed-line {
@@ -1933,6 +1986,16 @@ img {
     border-color: rgba(131, 112, 201, 0.24);
     background: rgba(28, 20, 42, 0.92);
     box-shadow: 0 6px 0 rgba(18, 13, 28, 0.72);
+  }
+
+  .landing-feed-line-top {
+    border-color: rgba(255, 224, 143, 0.34);
+    background:
+      linear-gradient(180deg, rgba(63, 49, 18, 0.94), rgba(33, 24, 46, 0.94)),
+      rgba(28, 20, 42, 0.92);
+    box-shadow:
+      0 8px 0 rgba(18, 13, 28, 0.72),
+      0 0 0 2px rgba(255, 224, 143, 0.08);
   }
 
   .landing-feed-title {
@@ -1943,6 +2006,38 @@ img {
   .landing-feed-text {
     @apply mt-2 text-sm font-semibold leading-6;
     color: rgba(249, 233, 199, 0.84);
+  }
+
+  .landing-live-pill {
+    @apply inline-flex items-center rounded-full border px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em];
+    border-color: rgba(255, 146, 177, 0.34);
+    background: rgba(87, 29, 49, 0.92);
+    color: #ff92b1;
+    box-shadow: 0 4px 0 rgba(18, 13, 28, 0.72);
+  }
+
+  .landing-board-kicker {
+    @apply text-sm font-black leading-6;
+    color: rgba(249, 233, 199, 0.84);
+    max-width: 24rem;
+  }
+
+  .landing-board-mini-stats {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .landing-board-mini-stat {
+    @apply rounded-[16px] border px-3 py-3;
+    border-color: rgba(126, 113, 186, 0.24);
+    background: rgba(29, 21, 42, 0.9);
+    box-shadow: 0 5px 0 rgba(18, 13, 28, 0.72);
+  }
+
+  .landing-board-mini-value {
+    @apply mt-2 block text-xl font-black;
+    color: #ffe08f;
   }
 
   .landing-feature-grid {
@@ -2470,12 +2565,13 @@ img {
 
 @media (min-width: 1100px) {
   .global-nav-frame {
-    grid-template-columns: minmax(260px, 1fr) minmax(380px, 1.2fr) minmax(360px, auto);
+    grid-template-columns: minmax(220px, 0.9fr) minmax(520px, 1.45fr) minmax(280px, auto);
     align-items: center;
   }
 
   .global-nav-links {
     justify-content: center;
+    overflow: visible;
   }
 
   .global-nav-meta {

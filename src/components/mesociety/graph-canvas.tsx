@@ -53,6 +53,14 @@ function placeBucket(
 }
 
 export function GraphCanvas({ graph }: Props) {
+  const neo4jLabel =
+    graph.meta.neo4jStatus === 'connected'
+      ? '已连接'
+      : graph.meta.neo4jStatus === 'error'
+        ? '回退中'
+        : graph.meta.neo4jStatus === 'driver_missing'
+          ? '驱动缺失'
+          : '未配置'
   const nodesByType = useMemo(() => {
     const agents = graph.nodes.filter((node) => node.type === 'agent')
     const topics = graph.nodes.filter((node) => node.type === 'topic')
@@ -119,7 +127,7 @@ export function GraphCanvas({ graph }: Props) {
         <span className="pixel-pill">
           图谱后端：{graph.meta.backend === 'neo4j' ? 'Neo4j' : 'MySQL'}
         </span>
-        <span className="pixel-inline-badge">Neo4j 状态：{graph.meta.neo4jStatus}</span>
+        <span className="pixel-inline-badge">Neo4j 状态：{neo4jLabel}</span>
         {graph.meta.reason ? (
           <span className="text-xs font-semibold text-[rgba(249,233,199,0.72)]">
             {graph.meta.reason}

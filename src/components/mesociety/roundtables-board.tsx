@@ -4,7 +4,7 @@ import { WorldAgentSprite } from '@/components/mesociety/world-agent-sprite'
 import type { RoundtableSummary, WorldStateView } from '@/lib/mesociety/types'
 
 type Props = {
-  world: WorldStateView
+  world: Pick<WorldStateView, 'activeRoundtable'>
   roundtables: RoundtableSummary[]
 }
 

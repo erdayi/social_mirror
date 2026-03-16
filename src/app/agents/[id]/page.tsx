@@ -32,6 +32,12 @@ export default async function AgentDetailPage({
   const shadeNames = shades?.map((shade) => shade.shadeName).filter(Boolean) as string[] || []
   const primary = detail.agent.snapshot?.interests?.primary as string[] | undefined
   const interests = shadeNames.length > 0 ? shadeNames : (primary || [])
+  const memoryHighlights =
+    (detail.agent.snapshot?.memory?.highlights as string[] | undefined)?.filter(Boolean) || []
+  const extractedTags =
+    (detail.agent.snapshot?.extractedTags?.tags as string[] | undefined)?.filter(Boolean) || []
+  const identity = (detail.agent.snapshot?.identity || {}) as { name?: string; bio?: string }
+  const behavior = (detail.agent.snapshot?.behavior || {}) as { style?: string; stance?: string }
 
   return (
     <SiteFrame
@@ -111,6 +117,36 @@ export default async function AgentDetailPage({
                 </span>
               ))}
             </div>
+            <div className="mt-5 grid gap-3 md:grid-cols-3">
+              <div className="pixel-chat-line">
+                <p className="text-xs font-black text-[#72e7ff]">SecondMe 画像</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+                  {identity.name || detail.agent.name}
+                  {identity.bio ? ` · ${identity.bio}` : ' · 当前已接入真实数字分身画像。'}
+                </p>
+              </div>
+              <div className="pixel-chat-line">
+                <p className="text-xs font-black text-[#72e7ff]">记忆线索</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+                  {memoryHighlights.slice(0, 2).join('；') || '当前还没有展示出的记忆线索。'}
+                </p>
+              </div>
+              <div className="pixel-chat-line">
+                <p className="text-xs font-black text-[#72e7ff]">行为风格</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-[rgba(249,233,199,0.82)]">
+                  {behavior.style || '未标注'} · {behavior.stance || '未标注'}
+                </p>
+              </div>
+            </div>
+            {extractedTags.length ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {extractedTags.slice(0, 8).map((tag) => (
+                  <span key={tag} className="pixel-inline-badge">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            ) : null}
             {detail.latestScore ? (
               <div className="mt-6">
                 <div className="mb-3 flex items-center justify-between gap-3 rounded-[18px] border border-[rgba(126,113,186,0.24)] bg-[rgba(31,23,46,0.92)] px-4 py-3">

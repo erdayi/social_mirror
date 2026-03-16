@@ -1,12 +1,12 @@
 import Link from 'next/link'
 import { SiteFrame } from '@/components/mesociety/site-frame'
 import { AgentsDirectory } from '@/components/mesociety/agents-directory'
-import { getWorldStateView } from '@/lib/mesociety/simulation'
+import { getAgentsDirectoryView } from '@/lib/mesociety/simulation'
 
 export const dynamic = 'force-dynamic'
 
 export default async function AgentsPage() {
-  const world = await getWorldStateView()
+  const world = await getAgentsDirectoryView()
 
   return (
     <SiteFrame

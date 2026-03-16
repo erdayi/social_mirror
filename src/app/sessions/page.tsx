@@ -43,7 +43,7 @@ export default async function SessionsPage() {
     <SiteFrame
       eyebrow="会话历史"
       title="社会会话与圆桌档案"
-      description="这里汇总你的 SecondMe 私聊记录，以及 MeSociety 中多 Agent 圆桌、语音回放和公共议题档案；后续接入知乎后，会把外部热议一起沉淀到这层记录。"
+      description="这里汇总你的 SecondMe 私聊记录，以及 SocialMirror 中多 Agent 圆桌、语音回放和公共议题档案；后续接入知乎后，会把外部热议一起沉淀到这层记录。"
       actions={
         <div className="flex flex-wrap items-center gap-3">
           <Link href="/dashboard" className="pixel-button subtle">

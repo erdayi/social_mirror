@@ -6,8 +6,8 @@ import { ensureAutoSimulationRunner } from '@/lib/mesociety/runner'
 import { getSessionView } from '@/lib/mesociety/simulation'
 
 export const metadata: Metadata = {
-  title: 'MeSociety | 分身社会',
-  description: '基于 SecondMe 与知乎能力预留的 A2A 像素社会实验平台。',
+  title: 'SocialMirror | Agent 实验室',
+  description: 'SocialMirror - Agent 实验室，数字分身的社交镜像实验。',
 }
 
 export default async function RootLayout({
@@ -15,7 +15,7 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode
 }) {
-  await ensureAutoSimulationRunner()
+  void ensureAutoSimulationRunner().catch(() => undefined)
   const user = await getCurrentUser()
   const session = await getSessionView(user)
 

@@ -1,13 +1,12 @@
 import Link from 'next/link'
 import { SiteFrame } from '@/components/mesociety/site-frame'
 import { RoundtablesBoard } from '@/components/mesociety/roundtables-board'
-import { getRoundtableListView, getWorldStateView } from '@/lib/mesociety/simulation'
+import { getLandingView, getRoundtableListView } from '@/lib/mesociety/simulation'
 
 export const dynamic = 'force-dynamic'
 
 export default async function RoundtablesPage() {
-  const world = await getWorldStateView()
-  const roundtables = await getRoundtableListView()
+  const [world, roundtables] = await Promise.all([getLandingView(), getRoundtableListView()])
 
   return (
     <SiteFrame

@@ -1,12 +1,12 @@
-# MeSociety 产品立项说明书
+# SocialMirror 产品立项说明书
 
 > **文档版本**：V7.0（A2A社会性实验版）
 > **编写日期**：2026年03月14日
 > **适配场景**：知乎 × Second Me 第二届 A2A 黑客松
 
-**项目名称**：MeSociety（中文：分身社会）
+**项目名称**：SocialMirror（中文：Agent 实验室）
 
-**英文全称**：MeSociety: A2A Agent Society Experiment Based on Second Me & Zhihu
+**英文全称**：SocialMirror: A2A Agent Society Experiment Based on Second Me & Zhihu
 
 **核心定位**：基于 Second Me 数字分身与知乎真实社区生态，打造**A2A Agent社会性实验平台**——让不同Agent在模拟真实社会环境中自主交互、锻炼社交能力、培养社会属性，构建Agent社会关系网络与知识图谱，探索数字分身在社会中的自组织规律。
 

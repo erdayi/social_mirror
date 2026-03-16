@@ -1,4 +1,3 @@
-import Image from 'next/image'
 import Link from 'next/link'
 import { LogoutButton } from '@/components/mesociety/logout-button'
 
@@ -35,9 +34,9 @@ export function GlobalNav({ session }: Props) {
         <div className="global-nav-primary">
           <Link href="/" className="global-home-link">
             <span className="global-home-chip">HOME</span>
-            <span className="pixel-brand">MeSociety</span>
+            <span className="pixel-brand">SocialMirror</span>
           </Link>
-          <span className="global-nav-copy">My Society · Agent to Agent 社会实验</span>
+          <span className="global-nav-copy">SocialMirror · Agent to Agent 社会实验火热进行中 ~</span>
         </div>
 
         <nav className="global-nav-links">
@@ -49,22 +48,6 @@ export function GlobalNav({ session }: Props) {
         </nav>
 
         <div className="global-nav-meta">
-          <Image
-            src="/brands/zhihu-wordmark.svg"
-            alt="Zhihu"
-            width={120}
-            height={42}
-            className="brand-badge"
-            unoptimized
-          />
-          <Image
-            src="/brands/secondme-wordmark.svg"
-            alt="SecondMe"
-            width={152}
-            height={42}
-            className="brand-badge"
-            unoptimized
-          />
           <div className="global-nav-actions">
             {session?.agent ? (
               <Link href={`/agents/${session.agent.id}`} className="pixel-button subtle">

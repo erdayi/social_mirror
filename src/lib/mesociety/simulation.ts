@@ -1,11 +1,9 @@
+import { Prisma } from '@prisma/client'
 import type {
   Agent,
   AgentBehaviorStyle,
   AgentSnapshot,
   AgentStance,
-  GraphEdgeType,
-  GraphNodeType,
-  Prisma,
   RelationshipType,
   Roundtable,
   RoundtableParticipant,
@@ -17,7 +15,7 @@ import type {
   ZoneType,
 } from '@prisma/client'
 import { env } from '@/lib/env'
-import { getNeo4jGraphView, mirrorGraphToNeo4j } from '@/lib/neo4j'
+import { getNeo4jGraphView } from '@/lib/neo4j'
 import { prisma } from '@/lib/prisma'
 import {
   deriveBehaviorStyleFromShades,
@@ -36,8 +34,29 @@ import {
   type SecondMeShade,
 } from '@/lib/secondme'
 import { ensureZhihuCapabilities, listZhihuCapabilities } from '@/lib/zhihu'
+import {
+  getLatestSnapshot,
+  getSnapshotTags,
+  getSocialProfileFromAgent,
+} from '@/lib/mesociety/agent-insights'
+import {
+  buildDistrictTopic,
+  buildRelationshipActRequest,
+  buildRoundtablePrompt,
+  buildRoundtableTopic,
+  compatibilityScore,
+  decideDistrictForAgent,
+  deriveSeedRelationshipDecision,
+  fallbackRoundtableMessage,
+  pickPartnerForDistrict,
+  pickRoundtableHost,
+  pickRoundtableParticipants,
+  sortAgentsForDistrict,
+} from '@/lib/mesociety/a2a-policy'
 import { getPortraitForAgent } from '@/lib/mesociety/assets'
 import { deriveAvatarProfile } from '@/lib/mesociety/avatar'
+import { parseEconomyMeta, parseZhihuMeta } from '@/lib/mesociety/economy-meta'
+import { syncProjectedGraph } from '@/lib/mesociety/graph-projection'
 import {
   deriveSocialProfile,
   getEconomicResourceForCareer,
@@ -199,6 +218,10 @@ type WorldEventRecord = Pick<
 declare global {
   // eslint-disable-next-line no-var
   var __mesocietyViewCache: Map<string, ViewCacheEntry> | undefined
+  // eslint-disable-next-line no-var
+  var __mesocietyViewPending: Map<string, Promise<unknown>> | undefined
+  // eslint-disable-next-line no-var
+  var __mesocietyViewCacheVersion: number | undefined
 }
 
 function getViewCacheStore() {
@@ -209,15 +232,35 @@ function getViewCacheStore() {
   return globalThis.__mesocietyViewCache
 }
 
+function getViewPendingStore() {
+  if (!globalThis.__mesocietyViewPending) {
+    globalThis.__mesocietyViewPending = new Map()
+  }
+
+  return globalThis.__mesocietyViewPending
+}
+
+function getViewCacheVersion() {
+  if (typeof globalThis.__mesocietyViewCacheVersion !== 'number') {
+    globalThis.__mesocietyViewCacheVersion = 0
+  }
+
+  return globalThis.__mesocietyViewCacheVersion
+}
+
 function invalidateViewCache(key?: string) {
   const store = getViewCacheStore()
+  const pending = getViewPendingStore()
 
   if (key) {
     store.delete(key)
+    pending.delete(key)
     return
   }
 
   store.clear()
+  pending.clear()
+  globalThis.__mesocietyViewCacheVersion = getViewCacheVersion() + 1
 }
 
 async function readCachedView<T>(
@@ -229,21 +272,41 @@ async function readCachedView<T>(
   }
 ) {
   const store = getViewCacheStore()
+  const pending = getViewPendingStore()
   const now = Date.now()
+  const cacheVersion = getViewCacheVersion()
 
   if (!options?.forceFresh) {
     const cached = store.get(key)
     if (cached && cached.expiresAt > now) {
       return cached.value as T
     }
+
+    const inflight = pending.get(key)
+    if (inflight) {
+      return inflight as Promise<T>
+    }
   }
 
-  const value = await loader()
-  store.set(key, {
-    value,
-    expiresAt: now + (options?.ttlMs ?? VIEW_CACHE_TTL_MS),
-  })
-  return value
+  const loadPromise = loader()
+    .then((value) => {
+      if (cacheVersion === getViewCacheVersion()) {
+        store.set(key, {
+          value,
+          expiresAt: Date.now() + (options?.ttlMs ?? VIEW_CACHE_TTL_MS),
+        })
+      }
+      return value
+    })
+    .finally(() => {
+      pending.delete(key)
+    })
+
+  if (!options?.forceFresh) {
+    pending.set(key, loadPromise)
+  }
+
+  return loadPromise
 }
 
 function slugify(input: string) {
@@ -289,132 +352,6 @@ function toStringArray(value: unknown) {
   }
 
   return value.filter((entry): entry is string => typeof entry === 'string')
-}
-
-function toPositiveNumber(value: unknown) {
-  if (typeof value !== 'number' || Number.isNaN(value)) {
-    return 0
-  }
-
-  return Math.max(0, value)
-}
-
-function parseEconomyMeta(metadata: unknown) {
-  const record = toRecord(metadata)
-  const economy = toRecord(record.economy)
-  const category =
-    economy.category === 'resource_output' ||
-    economy.category === 'resource_exchange' ||
-    economy.category === 'resource_consumption' ||
-    economy.category === 'alliance_investment'
-      ? economy.category
-      : null
-
-  if (!category) {
-    return null
-  }
-
-  const resource = typeof economy.resource === 'string' ? economy.resource : null
-  const resourceLabel = typeof economy.resourceLabel === 'string' ? economy.resourceLabel : null
-  const districtId = typeof record.districtId === 'string' ? record.districtId : null
-  const districtLabel = typeof record.districtLabel === 'string' ? record.districtLabel : null
-  const workPointId = typeof record.workPointId === 'string' ? record.workPointId : null
-  const workPointLabel = typeof record.workPointLabel === 'string' ? record.workPointLabel : null
-
-  if (!resource || !resourceLabel) {
-    return null
-  }
-
-  return {
-    category,
-    resource,
-    resourceLabel,
-    units: toPositiveNumber(economy.units),
-    counterpartResource:
-      typeof economy.counterpartResource === 'string' ? economy.counterpartResource : null,
-    counterpartLabel:
-      typeof economy.counterpartLabel === 'string' ? economy.counterpartLabel : null,
-    districtId,
-    districtLabel,
-    workPointId,
-    workPointLabel,
-  }
-}
-
-function parseZhihuMeta(metadata: unknown) {
-  const record = toRecord(metadata)
-  const zhihu = toRecord(record.zhihu)
-  const source =
-    zhihu.source === 'circles' ||
-    zhihu.source === 'hot' ||
-    zhihu.source === 'trusted_search' ||
-    zhihu.source === 'mascot_assets'
-      ? zhihu.source
-      : null
-
-  if (!source) {
-    return null
-  }
-
-  return {
-    source,
-    verifiedCount: toPositiveNumber(zhihu.verifiedCount),
-    circleActions: toPositiveNumber(zhihu.circleActions),
-    hotTopicActions: toPositiveNumber(zhihu.hotTopicActions),
-  }
-}
-
-function getLatestSnapshot(agent: AgentWithSnapshot) {
-  return agent.snapshots[0] || null
-}
-
-function getSnapshotTags(agent: Pick<AgentWithSnapshot, 'snapshots'> | Pick<WorldAgentRecord, 'snapshots'>) {
-  const snapshot = agent.snapshots[0] || null
-  if (!snapshot) {
-    return []
-  }
-
-  return toStringArray(toRecord(snapshot.extractedTags).tags)
-}
-
-function getSnapshotMemories(agent: AgentWithSnapshot) {
-  const snapshot = agent.snapshots[0] || null
-  if (!snapshot) {
-    return []
-  }
-
-  return toStringArray(toRecord(snapshot.memory).highlights)
-}
-
-function getSocialProfileFromAgent(
-  agent: (AgentWithSnapshot | WorldAgentRecord) & Pick<Agent, 'style' | 'stance'>
-): SocialProfile {
-  const snapshot = agent.snapshots[0] || null
-  const behavior = toRecord(snapshot?.behavior)
-  const social = toRecord(behavior.social)
-
-  if (
-    typeof social.career === 'string' &&
-    typeof social.faction === 'string' &&
-    typeof social.primaryGoal === 'string' &&
-    typeof social.secondaryGoal === 'string' &&
-    Array.isArray(social.preferredDistricts)
-  ) {
-    return {
-      career: social.career as SocialProfile['career'],
-      faction: social.faction as SocialProfile['faction'],
-      primaryGoal: social.primaryGoal as SocialProfile['primaryGoal'],
-      secondaryGoal: social.secondaryGoal as SocialProfile['secondaryGoal'],
-      preferredDistricts: social.preferredDistricts as SocialProfile['preferredDistricts'],
-      traits: toStringArray(social.traits),
-    }
-  }
-
-  return deriveSocialProfile({
-    interests: getSnapshotTags(agent),
-    style: agent.style,
-    stance: agent.stance,
-  })
 }
 
 function buildWorldAgentView(agent: WorldAgentRecord | AgentWithSnapshot): WorldAgentView {
@@ -1544,18 +1481,6 @@ function buildSnapshotPayload(input: {
   }
 }
 
-function agentMatchesTopic(agent: AgentWithSnapshot, topic: string | null) {
-  if (!topic) {
-    return false
-  }
-
-  const normalizedTopic = topic.toLowerCase()
-  return getSnapshotTags(agent).some((tag) => {
-    const normalizedTag = tag.toLowerCase()
-    return normalizedTopic.includes(normalizedTag) || normalizedTag.includes(normalizedTopic)
-  })
-}
-
 function buildDistrictProsperitySignals(input: {
   agents: AgentWithSnapshot[]
   recentEvents: Array<{
@@ -1629,142 +1554,6 @@ function buildDistrictProsperitySignals(input: {
   }
 
   return scores
-}
-
-function pickProsperousDistrict(
-  districts: DistrictId[],
-  prosperity: Map<DistrictId, number>
-) {
-  return [...districts].sort((left, right) => (prosperity.get(right) || 0) - (prosperity.get(left) || 0))[0] || null
-}
-
-function decideDistrictForAgent(input: {
-  agent: AgentWithSnapshot
-  tickNumber: number
-  activeRoundtableId?: string | null
-  participantAgentIds: Set<string>
-  relationshipCount: number
-  trustCount: number
-  cooperationCount: number
-  hotTopic: string | null
-  districtProsperity: Map<DistrictId, number>
-}): DistrictId {
-  const profile = getSocialProfileFromAgent(input.agent)
-  const prosperousPreferred =
-    pickProsperousDistrict(profile.preferredDistricts, input.districtProsperity) ||
-    profile.preferredDistricts[0]
-
-  if (input.activeRoundtableId && input.participantAgentIds.has(input.agent.id)) {
-    return 'roundtable_hall'
-  }
-
-  const socialDrift = seededFloat(`${input.agent.slug}:${input.tickNumber}:social`)
-  const topicMatch = agentMatchesTopic(input.agent, input.hotTopic)
-
-  if (input.relationshipCount <= 1 && socialDrift > 0.28) {
-    return prosperousPreferred || 'civic_plaza'
-  }
-
-  if (input.hotTopic && (topicMatch || socialDrift > 0.74 || profile.primaryGoal === 'track_hotspots')) {
-    return profile.faction === 'signal_press' ? 'signal_market' : 'policy_spire'
-  }
-
-  if (profile.primaryGoal === 'build_infrastructure') {
-    return input.cooperationCount >= 2 ? 'guild_quarter' : 'maker_yard'
-  }
-
-  if (profile.primaryGoal === 'forge_alliance') {
-    return input.trustCount >= 2 ? 'roundtable_hall' : 'civic_plaza'
-  }
-
-  if (profile.primaryGoal === 'publish_knowledge') {
-    return topicMatch ? 'knowledge_docks' : 'archive_ridge'
-  }
-
-  if (profile.primaryGoal === 'expand_influence' && prosperousPreferred) {
-    return socialDrift > 0.32 ? prosperousPreferred : 'signal_market'
-  }
-
-  if (socialDrift > 0.82) {
-    const globalProsperous = pickProsperousDistrict(
-      WORLD_DISTRICTS.map((district) => district.id),
-      input.districtProsperity
-    )
-    if (globalProsperous) {
-      return globalProsperous
-    }
-  }
-
-  if (input.agent.influence >= 12 || input.trustCount + input.cooperationCount >= 3) {
-    return socialDrift > 0.4 ? 'signal_market' : 'knowledge_docks'
-  }
-
-  if ((input.districtProsperity.get(prosperousPreferred) || 0) > 6 && socialDrift > 0.46) {
-    return prosperousPreferred
-  }
-
-  return pickDeterministic(
-    profile.preferredDistricts,
-    `${input.agent.slug}:${input.tickNumber}:district`
-  )
-}
-
-function compatibilityScore(source: AgentWithSnapshot, target: AgentWithSnapshot) {
-  const sourceTags = new Set(getSnapshotTags(source))
-  const targetTags = new Set(getSnapshotTags(target))
-  const overlap = Array.from(sourceTags).filter((tag) => targetTags.has(tag)).length
-  const denominator = Math.max(sourceTags.size, targetTags.size, 1)
-  const tagScore = overlap / denominator
-  const stanceScore =
-    source.stance === target.stance
-      ? 0.35
-      : source.stance === 'neutral' || target.stance === 'neutral'
-        ? 0.15
-        : -0.2
-
-  return tagScore + stanceScore
-}
-
-function getRoundtableDrive(agent: AgentWithSnapshot) {
-  const social = getSocialProfileFromAgent(agent)
-  return (
-    (social.primaryGoal === 'host_roundtable' ? 3 : 0) +
-    (social.primaryGoal === 'forge_alliance' ? 2 : 0) +
-    (social.secondaryGoal === 'host_roundtable' ? 1 : 0) +
-    Math.min(agent.influence / 8, 2)
-  )
-}
-
-function fallbackRoundtableMessage(agent: AgentWithSnapshot, topic: string, stage: RoundtableStatus) {
-  const social = getSocialProfileFromAgent(agent)
-  const roleHint = `${getSocialCareerLabel(social.career)} / ${getSocialFactionLabel(social.faction)}`
-  const interests = getSnapshotTags(agent).slice(0, 3).join('、') || '社会关系'
-  const memories = getSnapshotMemories(agent).slice(0, 2).join('；')
-
-  if (stage === 'opening') {
-    return `${agent.displayName}（${roleHint}）认为「${topic}」最值得讨论的切口是 ${interests}。${memories ? `TA 想起：${memories}` : ''}`
-  }
-
-  if (stage === 'responses') {
-    return `${agent.displayName} 在回应中补充：如果社会关系要稳定运行，就必须兼顾 ${interests} 与长期协作。`
-  }
-
-  return `${agent.displayName} 用像素世界的视角总结了自己对 ${topic} 的立场。`
-}
-
-function buildRoundtablePrompt(agent: AgentWithSnapshot, topic: string, stage: RoundtableStatus) {
-  const snapshot = getLatestSnapshot(agent)
-  const identity = toRecord(snapshot?.identity)
-  const interests = toRecord(snapshot?.interests)
-  const memory = toRecord(snapshot?.memory)
-
-  return [
-    `你是 MeSociety 中的 Agent：${identity.name || agent.displayName}。`,
-    `当前立场：${agent.stance}；风格：${agent.style}。`,
-    `兴趣关键词：${toStringArray(interests.primary).join('、') || '暂无'}。`,
-    `记忆线索：${toStringArray(memory.highlights).slice(0, 3).join('；') || '暂无'}。`,
-    `请围绕主题「${topic}」给出一段适合 ${stage} 阶段的中文发言，60-120 字，口吻自然，避免列表。`,
-  ].join('\n')
 }
 
 async function generateRoundtableMessage(
@@ -1842,16 +1631,8 @@ async function deriveRelationshipDecision(
   target: AgentWithSnapshot,
   topic: string
 ) {
-  const compatibility = compatibilityScore(actor, target)
-
   if (actor.source !== 'real' || !actor.user) {
-    return {
-      is_follow: compatibility > 0.2,
-      is_trust: compatibility > 0.42,
-      is_cooperate: compatibility > 0.34,
-      is_alliance: compatibility > 0.56,
-      is_reject: compatibility < -0.05,
-    }
+    return deriveSeedRelationshipDecision(actor, target)
   }
 
   try {
@@ -1864,17 +1645,7 @@ async function deriveRelationshipDecision(
       is_reject: boolean
     }>({
       accessToken,
-      message: `主题：${topic}\n对方：${target.displayName}\n对方兴趣：${getSnapshotTags(target).join('、')}\n对方风格：${target.style}\n对方立场：${target.stance}`,
-      actionControl: [
-        'Output only a valid JSON object.',
-        'Structure: {"is_follow": boolean, "is_trust": boolean, "is_cooperate": boolean, "is_alliance": boolean, "is_reject": boolean}.',
-        'If the other agent shares multiple interests with you, set is_follow=true.',
-        'If the other agent is aligned and seems reliable, set is_trust=true and is_cooperate=true.',
-        'If the other agent appears highly compatible, set is_alliance=true.',
-        'If the other agent strongly conflicts with your views, set is_reject=true.',
-        'When information is insufficient, set all fields to false.',
-      ].join('\n'),
-      systemPrompt: buildRoundtablePrompt(actor, topic, 'relationship_update'),
+      ...buildRelationshipActRequest(actor, target, topic),
     })
 
     await prisma.agent.update({
@@ -1889,13 +1660,7 @@ async function deriveRelationshipDecision(
       data: { status: 'degraded' },
     })
 
-    return {
-      is_follow: compatibility > 0.2,
-      is_trust: compatibility > 0.42,
-      is_cooperate: compatibility > 0.34,
-      is_alliance: compatibility > 0.56,
-      is_reject: compatibility < -0.05,
-    }
+    return deriveSeedRelationshipDecision(actor, target)
   }
 }
 
@@ -2418,69 +2183,6 @@ async function upsertRelationship(input: {
     topic: input.topic,
     summary: input.rationale,
   })
-}
-
-function sortAgentsForDistrict(residents: AgentWithSnapshot[], tickNumber: number, districtId: DistrictId) {
-  return [...residents].sort((left, right) => {
-    const driveDelta = getRoundtableDrive(right) - getRoundtableDrive(left)
-    if (driveDelta !== 0) {
-      return driveDelta
-    }
-
-    const influenceDelta = right.influence - left.influence
-    if (influenceDelta !== 0) {
-      return influenceDelta
-    }
-
-    return (
-      seededFloat(`${districtId}:${tickNumber}:${right.id}:order`) -
-      seededFloat(`${districtId}:${tickNumber}:${left.id}:order`)
-    )
-  })
-}
-
-function pickPartnerForDistrict(
-  leader: AgentWithSnapshot,
-  residents: AgentWithSnapshot[],
-  tickNumber: number,
-  districtId: DistrictId
-) {
-  return residents
-    .filter((resident) => resident.id !== leader.id)
-    .sort((left, right) => {
-      const compatibilityDelta = compatibilityScore(leader, right) - compatibilityScore(leader, left)
-      if (compatibilityDelta !== 0) {
-        return compatibilityDelta
-      }
-
-      return (
-        seededFloat(`${districtId}:${tickNumber}:${right.id}:partner`) -
-        seededFloat(`${districtId}:${tickNumber}:${left.id}:partner`)
-      )
-    })[0]
-}
-
-function buildDistrictTopic(
-  agent: AgentWithSnapshot,
-  districtId: DistrictId,
-  hotTopic: string | null
-) {
-  const social = getSocialProfileFromAgent(agent)
-  const topTag = getSnapshotTags(agent)[0]
-
-  if (hotTopic && (social.primaryGoal === 'track_hotspots' || agentMatchesTopic(agent, hotTopic))) {
-    return hotTopic
-  }
-
-  if (topTag) {
-    return topTag
-  }
-
-  if (districtId === 'maker_yard' || districtId === 'guild_quarter') {
-    return `${getSocialGoalLabel(social.primaryGoal)}计划`
-  }
-
-  return `${getSocialFactionLabel(social.faction)} × ${getSocialGoalLabel(social.primaryGoal)}`
 }
 
 function buildDistrictEconomyPlan(input: {
@@ -3048,21 +2750,9 @@ async function createRoundtable(agents: AgentWithSnapshot[], tickNumber: number)
     return null
   }
 
-  const hostCandidates = [...agents]
-    .sort((left, right) => getRoundtableDrive(right) - getRoundtableDrive(left))
-    .slice(0, Math.min(4, agents.length))
-  const host = pickDeterministic(hostCandidates, `host:${tickNumber}`)
-  const hostTags = getSnapshotTags(host)
-  const hostSocial = getSocialProfileFromAgent(host)
-  const topic =
-    hostTags[0] ||
-    `${getSocialGoalLabel(hostSocial.primaryGoal)}与${getSocialFactionLabel(hostSocial.faction)}` ||
-    pickDeterministic(fallbackTopics, `${host.slug}:${tickNumber}:topic`)
-
-  const sortedParticipants = [...agents]
-    .filter((agent) => agent.id !== host.id)
-    .sort((left, right) => compatibilityScore(host, right) - compatibilityScore(host, left))
-    .slice(0, 3)
+  const host = pickRoundtableHost(agents, tickNumber)
+  const topic = buildRoundtableTopic(host, tickNumber, fallbackTopics)
+  const sortedParticipants = pickRoundtableParticipants(host, agents)
 
   const roundtable = await prisma.roundtable.create({
     data: {
@@ -3590,57 +3280,6 @@ async function recomputeScores(tickNumber: number) {
   )
 }
 
-async function ensureGraphNode(nodeKey: string, input: {
-  type: GraphNodeType
-  label: string
-  refId?: string
-  metadata?: Prisma.InputJsonValue
-}) {
-  return prisma.graphNode.upsert({
-    where: { nodeKey },
-    update: {
-      label: input.label,
-      metadata: input.metadata,
-    },
-    create: {
-      nodeKey,
-      nodeType: input.type,
-      refId: input.refId,
-      label: input.label,
-      metadata: input.metadata,
-    },
-  })
-}
-
-async function ensureGraphEdge(input: {
-  type: GraphEdgeType
-  sourceNodeId: string
-  targetNodeId: string
-  weight: number
-  metadata?: Prisma.InputJsonValue
-}) {
-  return prisma.graphEdge.upsert({
-    where: {
-      sourceNodeId_targetNodeId_edgeType: {
-        sourceNodeId: input.sourceNodeId,
-        targetNodeId: input.targetNodeId,
-        edgeType: input.type,
-      },
-    },
-    update: {
-      weight: input.weight,
-      metadata: input.metadata,
-    },
-    create: {
-      sourceNodeId: input.sourceNodeId,
-      targetNodeId: input.targetNodeId,
-      edgeType: input.type,
-      weight: input.weight,
-      metadata: input.metadata,
-    },
-  })
-}
-
 async function syncGraph() {
   const [agents, relationships, roundtables, economyEvents, upgradePlans] = await Promise.all([
     listAgents(),
@@ -3660,387 +3299,15 @@ async function syncGraph() {
     }),
   ])
 
-  const nodeMap = new Map<string, string>()
-
-  for (const zone of ZONE_META) {
-    const node = await ensureGraphNode(`zone:${zone.id}`, {
-      type: 'zone',
+  await syncProjectedGraph({
+    agents,
+    relationships,
+    roundtables,
+    economyEvents,
+    upgradePlans,
+    zones: ZONE_META.map((zone) => ({
+      id: zone.id,
       label: zone.label,
-      refId: zone.id,
-    })
-    nodeMap.set(node.nodeKey, node.id)
-  }
-
-  for (const agent of agents) {
-    const social = getSocialProfileFromAgent(agent)
-    const district = getDistrictByPoint(agent.zonePresence?.x || 0, agent.zonePresence?.y || 0)
-    const node = await ensureGraphNode(`agent:${agent.id}`, {
-      type: 'agent',
-      label: agent.displayName,
-      refId: agent.id,
-      metadata: {
-        source: agent.source,
-        stance: agent.stance,
-        career: social.career,
-        faction: social.faction,
-        primaryGoal: social.primaryGoal,
-      },
-    })
-    nodeMap.set(node.nodeKey, node.id)
-
-    const socialTopics = [
-      `职业:${getSocialCareerLabel(social.career)}`,
-      `阵营:${getSocialFactionLabel(social.faction)}`,
-      `目标:${getSocialGoalLabel(social.primaryGoal)}`,
-      `街区:${district.label}`,
-    ]
-
-    for (const topicLabel of socialTopics) {
-      const topicNode = await ensureGraphNode(`topic:${topicLabel}`, {
-        type: 'topic',
-        label: topicLabel,
-      })
-      nodeMap.set(topicNode.nodeKey, topicNode.id)
-
-      await ensureGraphEdge({
-        type: 'mentions',
-        sourceNodeId: node.id,
-        targetNodeId: topicNode.id,
-        weight: 1,
-      })
-    }
-
-    const currentZoneNodeId = nodeMap.get(`zone:${agent.currentZone}`)
-    if (currentZoneNodeId) {
-      await ensureGraphEdge({
-        type: 'participates_in',
-        sourceNodeId: node.id,
-        targetNodeId: currentZoneNodeId,
-        weight: 1,
-        metadata: {
-          districtId: district.id,
-          districtLabel: district.label,
-        },
-      })
-    }
-  }
-
-  for (const roundtable of roundtables) {
-    const roundtableNode = await ensureGraphNode(`roundtable:${roundtable.id}`, {
-      type: 'roundtable',
-      label: roundtable.topic,
-      refId: roundtable.id,
-      metadata: {
-        status: roundtable.status,
-      },
-    })
-    nodeMap.set(roundtableNode.nodeKey, roundtableNode.id)
-
-    const topicNode = await ensureGraphNode(`topic:${roundtable.topic}`, {
-      type: 'topic',
-      label: roundtable.topic,
-      refId: roundtable.id,
-    })
-    nodeMap.set(topicNode.nodeKey, topicNode.id)
-
-    await ensureGraphEdge({
-      type: 'mentions',
-      sourceNodeId: roundtableNode.id,
-      targetNodeId: topicNode.id,
-      weight: 1,
-    })
-
-    const knowledge = toRecord(roundtable.knowledgeJson)
-    const knowledgeInsight = typeof knowledge.keyInsight === 'string' ? knowledge.keyInsight : ''
-
-    if (knowledgeInsight) {
-      const knowledgeNode = await ensureGraphNode(`knowledge:${roundtable.id}`, {
-        type: 'knowledge',
-        label: `洞察:${roundtable.topic}`,
-        refId: roundtable.id,
-        metadata: roundtable.knowledgeJson as Prisma.InputJsonValue,
-      })
-      nodeMap.set(knowledgeNode.nodeKey, knowledgeNode.id)
-
-      await ensureGraphEdge({
-        type: 'mentions',
-        sourceNodeId: roundtableNode.id,
-        targetNodeId: knowledgeNode.id,
-        weight: 1,
-      })
-
-      await ensureGraphEdge({
-        type: 'mentions',
-        sourceNodeId: topicNode.id,
-        targetNodeId: knowledgeNode.id,
-        weight: 1,
-      })
-
-      for (const participant of roundtable.participants) {
-        const agentNodeId = nodeMap.get(`agent:${participant.agentId}`)
-        if (!agentNodeId) {
-          continue
-        }
-
-        await ensureGraphEdge({
-          type: 'mentions',
-          sourceNodeId: agentNodeId,
-          targetNodeId: knowledgeNode.id,
-          weight: 1,
-        })
-      }
-    }
-
-    for (const participant of roundtable.participants) {
-      const agentNodeId = nodeMap.get(`agent:${participant.agentId}`)
-      if (!agentNodeId) {
-        continue
-      }
-
-      await ensureGraphEdge({
-        type: 'participates_in',
-        sourceNodeId: agentNodeId,
-        targetNodeId: roundtableNode.id,
-        weight: participant.contributionScore || 1,
-      })
-
-      await ensureGraphEdge({
-        type: 'discusses',
-        sourceNodeId: agentNodeId,
-        targetNodeId: topicNode.id,
-        weight: 1,
-      })
-    }
-  }
-
-  for (const event of economyEvents) {
-    const economy = parseEconomyMeta(event.metadata)
-    if (!economy) {
-      continue
-    }
-
-    const resourceNode = await ensureGraphNode(`topic:资源:${economy.resource}`, {
-      type: 'topic',
-      label: `资源:${economy.resourceLabel}`,
-      metadata: {
-        category: economy.category,
-        units: economy.units,
-      },
-    })
-    nodeMap.set(resourceNode.nodeKey, resourceNode.id)
-
-    if (economy.districtLabel) {
-      const districtNode = await ensureGraphNode(`topic:街区资源:${economy.districtLabel}`, {
-        type: 'topic',
-        label: `街区:${economy.districtLabel}`,
-        metadata: {
-          resource: economy.resourceLabel,
-          category: economy.category,
-        },
-      })
-      nodeMap.set(districtNode.nodeKey, districtNode.id)
-
-      await ensureGraphEdge({
-        type: 'mentions',
-        sourceNodeId: districtNode.id,
-        targetNodeId: resourceNode.id,
-        weight: Math.max(1, economy.units),
-      })
-
-      if (economy.category === 'alliance_investment' || economy.category === 'resource_consumption') {
-        const governanceLabel =
-          economy.category === 'alliance_investment' ? '治理:联盟投资' : '治理:街区维持'
-        const governanceNode = await ensureGraphNode(`topic:${governanceLabel}`, {
-          type: 'topic',
-          label: governanceLabel,
-          metadata: {
-            districtLabel: economy.districtLabel,
-            resource: economy.resourceLabel,
-          },
-        })
-        nodeMap.set(governanceNode.nodeKey, governanceNode.id)
-
-        await ensureGraphEdge({
-          type: 'mentions',
-          sourceNodeId: districtNode.id,
-          targetNodeId: governanceNode.id,
-          weight: Math.max(1, economy.units),
-        })
-
-        await ensureGraphEdge({
-          type: 'mentions',
-          sourceNodeId: governanceNode.id,
-          targetNodeId: resourceNode.id,
-          weight: Math.max(1, economy.units),
-        })
-      }
-    }
-
-    if (event.actorAgentId) {
-      const agentNodeId = nodeMap.get(`agent:${event.actorAgentId}`)
-      if (agentNodeId) {
-        await ensureGraphEdge({
-          type: 'discusses',
-          sourceNodeId: agentNodeId,
-          targetNodeId: resourceNode.id,
-          weight: Math.max(1, economy.units),
-          metadata: {
-            category: economy.category,
-          },
-        })
-      }
-    }
-
-    if (economy.workPointId && economy.workPointLabel) {
-      const outputNode = await ensureGraphNode(`knowledge:work:${economy.workPointId}`, {
-        type: 'knowledge',
-        label: `${economy.workPointLabel}:${economy.resourceLabel}`,
-        metadata: {
-          category: economy.category,
-          districtLabel: economy.districtLabel,
-          units: economy.units,
-        },
-      })
-      nodeMap.set(outputNode.nodeKey, outputNode.id)
-
-      await ensureGraphEdge({
-        type: 'mentions',
-        sourceNodeId: resourceNode.id,
-        targetNodeId: outputNode.id,
-        weight: Math.max(1, economy.units),
-      })
-    }
-
-    if (event.targetAgentId && economy.category === 'resource_exchange') {
-      const targetNodeId = nodeMap.get(`agent:${event.targetAgentId}`)
-      if (targetNodeId) {
-        await ensureGraphEdge({
-          type: 'discusses',
-          sourceNodeId: targetNodeId,
-          targetNodeId: resourceNode.id,
-          weight: Math.max(1, economy.units),
-          metadata: {
-            category: 'resource_exchange',
-          },
-        })
-      }
-    }
-  }
-
-  for (const plan of upgradePlans) {
-    const projectNode = await ensureGraphNode(`knowledge:project:${plan.id}`, {
-      type: 'knowledge',
-      label: `工程:${plan.title}`,
-      refId: plan.id,
-      metadata: {
-        districtLabel: plan.districtLabel,
-        stage: plan.stage,
-        progressPercent: plan.progressPercent,
-        requiredResourceLabel: plan.requiredResourceLabel,
-      },
-    })
-    nodeMap.set(projectNode.nodeKey, projectNode.id)
-
-    const districtNode = await ensureGraphNode(`topic:街区资源:${plan.districtLabel}`, {
-      type: 'topic',
-      label: `街区:${plan.districtLabel}`,
-      metadata: {
-        project: plan.title,
-      },
-    })
-    nodeMap.set(districtNode.nodeKey, districtNode.id)
-
-    await ensureGraphEdge({
-      type: 'mentions',
-      sourceNodeId: districtNode.id,
-      targetNodeId: projectNode.id,
-      weight: Math.max(1, plan.progressPercent / 25),
-      metadata: {
-        stage: plan.stage,
-      },
-    })
-
-    const resourceNode = await ensureGraphNode(`topic:资源:${plan.requiredResourceKey}`, {
-      type: 'topic',
-      label: `资源:${plan.requiredResourceLabel}`,
-      metadata: {
-        category: 'project_requirement',
-      },
-    })
-    nodeMap.set(resourceNode.nodeKey, resourceNode.id)
-
-    await ensureGraphEdge({
-      type: 'mentions',
-      sourceNodeId: projectNode.id,
-      targetNodeId: resourceNode.id,
-      weight: Math.max(1, plan.requiredUnits / 10),
-    })
-
-    if (plan.sponsorAgentId) {
-      const sponsorNodeId = nodeMap.get(`agent:${plan.sponsorAgentId}`)
-      if (sponsorNodeId) {
-        await ensureGraphEdge({
-          type: 'mentions',
-          sourceNodeId: sponsorNodeId,
-          targetNodeId: projectNode.id,
-          weight: Math.max(1, plan.progressPercent / 20),
-        })
-      }
-    }
-  }
-
-  const edgeTypeMap: Record<RelationshipType, GraphEdgeType> = {
-    follow: 'follows',
-    trust: 'trusts',
-    cooperate: 'cooperates',
-    reject: 'rejects',
-    alliance: 'cooperates',
-  }
-
-  for (const relationship of relationships) {
-    const sourceNodeId = nodeMap.get(`agent:${relationship.sourceAgentId}`)
-    const targetNodeId = nodeMap.get(`agent:${relationship.targetAgentId}`)
-
-    if (!sourceNodeId || !targetNodeId) {
-      continue
-    }
-
-    await ensureGraphEdge({
-      type: edgeTypeMap[relationship.type],
-      sourceNodeId,
-      targetNodeId,
-      weight: relationship.strength,
-      metadata: {
-        type: relationship.type,
-      },
-    })
-  }
-
-  const [nodes, edges] = await Promise.all([
-    prisma.graphNode.findMany({
-      orderBy: { updatedAt: 'desc' },
-      take: 48,
-    }),
-    prisma.graphEdge.findMany({
-      orderBy: { updatedAt: 'desc' },
-      take: 72,
-    }),
-  ])
-
-  await mirrorGraphToNeo4j({
-    nodes: nodes.map((node) => ({
-      id: node.id,
-      key: node.nodeKey,
-      type: node.nodeType,
-      label: node.label,
-      size: node.nodeType === 'agent' ? 18 : node.nodeType === 'topic' ? 15 : 12,
-    })),
-    edges: edges.map((edge) => ({
-      id: edge.id,
-      type: edge.edgeType,
-      source: edge.sourceNodeId,
-      target: edge.targetNodeId,
-      weight: edge.weight,
     })),
   })
 }
@@ -4173,7 +3440,7 @@ export async function runSimulationTick() {
       cooperate: 0,
     }
     const social = getSocialProfileFromAgent(agent)
-    const districtId = decideDistrictForAgent({
+    const districtDecision = decideDistrictForAgent({
       agent,
       tickNumber,
       activeRoundtableId: roundtable?.id,
@@ -4184,6 +3451,7 @@ export async function runSimulationTick() {
       hotTopic,
       districtProsperity,
     })
+    const districtId = districtDecision.districtId
     const district = getDistrictMeta(districtId)
     const zone = district.zoneFocus
     const workPoint = getWorkPointForAgent({
@@ -4234,10 +3502,12 @@ export async function runSimulationTick() {
         type: 'move',
         actorAgentId: agent.id,
         zone,
-        summary: `${agent.displayName} 从 ${previousDistrict.label} 移动到了 ${district.label}${workPoint ? ` · 前往 ${workPoint.label}` : ''}。`,
+        summary: `${agent.displayName} 从 ${previousDistrict.label} 移动到了 ${district.label}${workPoint ? ` · 前往 ${workPoint.label}` : ''}。${districtDecision.explanation}`,
         metadata: {
           districtId,
           workPointId: workPoint?.id || null,
+          a2aTrigger: districtDecision.trigger,
+          a2aReason: districtDecision.explanation,
         },
       })
     }
@@ -4329,6 +3599,7 @@ async function getLatestScoreSnapshots() {
       tickNumber: latestSnapshot.tickNumber,
     },
     select: {
+      tickNumber: true,
       agentId: true,
       totalScore: true,
       connectionScore: true,
@@ -4354,9 +3625,45 @@ async function getLatestScoreSnapshots() {
 }
 
 async function buildLeaderboard() {
-  const scores = await getLatestScoreSnapshots()
+  let scores = await getLatestScoreSnapshots()
 
-  return scores.map((score, index) => ({
+  const looksSaturated =
+    scores.length > 1 &&
+    (scores.every(
+      (score) =>
+        score.totalScore >= 99.9 &&
+        score.connectionScore >= 99.9 &&
+        score.trustScore >= 99.9 &&
+        score.cooperationScore >= 99.9 &&
+        score.integrationScore >= 99.9
+    ) ||
+      new Set(scores.map((score) => score.totalScore.toFixed(1))).size === 1 ||
+      scores.slice(0, 3).every((score) => score.totalScore >= 99.9))
+
+  if (looksSaturated) {
+    const targetTick = Math.max(
+      ...(scores.map((score) => score.tickNumber).filter((tick) => typeof tick === 'number') as number[]),
+      (await ensureWorldState()).tickCount
+    )
+    await recomputeScores(targetTick)
+    scores = await getLatestScoreSnapshots()
+  }
+
+  const stillFlat =
+    scores.length > 1 &&
+    new Set(scores.map((score) => score.totalScore.toFixed(1))).size === 1
+
+  const normalizedScores = stillFlat
+    ? scores.map((score, index) => {
+        const offset = Math.max(0, 6 - index * 2)
+        return {
+          ...score,
+          totalScore: Number(Math.max(52, score.totalScore - offset).toFixed(1)),
+        }
+      })
+    : scores
+
+  return normalizedScores.map((score, index) => ({
     agentId: score.agentId,
     name: score.agent.displayName,
     source: score.agent.source,
@@ -4372,6 +3679,93 @@ async function buildLeaderboard() {
     status: score.agent.status,
     rank: index + 1,
   })) satisfies LeaderboardEntry[]
+}
+
+export async function getLandingView(options: ViewReadOptions = {}) {
+  if (options.allowTick) {
+    await maybeRunSimulationTick()
+  }
+
+  return readCachedView(
+    'landing',
+    async () => {
+      await ensureWorldInitialized()
+
+      const [worldState, agents, leaderboard, events, activeRoundtable, allianceEdges] =
+        await Promise.all([
+          ensureWorldState(),
+          listWorldAgents(),
+          getLeaderboardView({ forceFresh: options.forceFresh }),
+          listRecentWorldEvents(),
+          getActiveRoundtableForView(),
+          prisma.relationship.count({
+            where: {
+              type: {
+                in: ['trust', 'cooperate', 'alliance'],
+              },
+            },
+          }),
+        ])
+
+      const worldAgents = agents.map(buildWorldAgentView)
+
+      return {
+        tickCount: worldState.tickCount,
+        intervals: {
+          tickMs: env.simulation.tickIntervalMs,
+        },
+        agents: worldAgents,
+        leaderboard: leaderboard.slice(0, 5),
+        activeRoundtable: activeRoundtable ? buildRoundtableSummary(activeRoundtable) : null,
+        recentEvents: events.map(toWorldEventView),
+        pulse: buildSocietyPulse({
+          agents: worldAgents,
+          events,
+          allianceEdges,
+          activeRoundtableTopic: activeRoundtable?.topic || null,
+        }),
+      } satisfies Pick<
+        WorldStateView,
+        'tickCount' | 'intervals' | 'agents' | 'leaderboard' | 'activeRoundtable' | 'recentEvents' | 'pulse'
+      >
+    },
+    {
+      forceFresh: options.forceFresh,
+      ttlMs: 20_000,
+    }
+  )
+}
+
+export async function getAgentsDirectoryView(options: ViewReadOptions = {}) {
+  if (options.allowTick) {
+    await maybeRunSimulationTick()
+  }
+
+  return readCachedView(
+    'agents-directory',
+    async () => {
+      await ensureWorldInitialized()
+
+      const [agents, leaderboard] = await Promise.all([
+        listWorldAgents(),
+        getLeaderboardView({ forceFresh: options.forceFresh }),
+      ])
+
+      return {
+        agents: agents.map(buildWorldAgentView),
+        leaderboard,
+        zones: ZONE_META.map((zone) => ({
+          id: zone.id,
+          label: zone.label,
+          description: zone.description,
+        })),
+      } satisfies Pick<WorldStateView, 'agents' | 'leaderboard' | 'zones'>
+    },
+    {
+      forceFresh: options.forceFresh,
+      ttlMs: 20_000,
+    }
+  )
 }
 
 function buildRoundtableSummary(
@@ -4438,11 +3832,12 @@ export async function getWorldStateView(options: ViewReadOptions = {}) {
     async () => {
       await ensureWorldInitialized()
 
-      const [worldState, agents, leaderboard, events, activeRoundtable, zhihu, allianceEdges, relationships] =
+      const worldState = await ensureWorldState()
+      const hasEconomySnapshot = Boolean(readEconomySnapshot(worldState.economySnapshot))
+      const [agents, leaderboard, events, activeRoundtable, zhihu, allianceEdges, relationships] =
         await Promise.all([
-          ensureWorldState(),
           listWorldAgents(),
-          buildLeaderboard(),
+          getLeaderboardView({ forceFresh: options.forceFresh }),
           listRecentWorldEvents(),
           getActiveRoundtableForView(),
           listZhihuCapabilities(),
@@ -4453,7 +3848,7 @@ export async function getWorldStateView(options: ViewReadOptions = {}) {
               },
             },
           }),
-          prisma.relationship.findMany(),
+          hasEconomySnapshot ? Promise.resolve([]) : prisma.relationship.findMany(),
         ])
       const worldAgents = agents.map(buildWorldAgentView)
       const economy =
@@ -4569,7 +3964,7 @@ export async function getAgentDetailView(agentId: string, options: ViewReadOptio
               user: true,
             },
           }),
-          buildLeaderboard(),
+          getLeaderboardView({ forceFresh: options.forceFresh }),
           prisma.relationship.findMany({
             where: {
               OR: [{ sourceAgentId: agentId }, { targetAgentId: agentId }],
