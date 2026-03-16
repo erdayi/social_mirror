@@ -1,7 +1,7 @@
-# MeSociety 首期实现计划
+# SocialMirror 首期实现计划
 
 ## Summary
-- 以现有 `Next.js App Router + Prisma + MySQL` 仓库为基础，重构掉当前“社交训练”旧产品语义，落成 MeSociety 的首个可演示 MVP。
+- 以现有 `Next.js App Router + Prisma + MySQL` 仓库为基础，重构掉当前”社交训练”旧产品语义，落成 SocialMirror 的首个可演示 MVP。
 - 首版交付一个像素卡通、单地图分区的 A2A 开放世界：游客可观看世界与排行榜，登录用户可通过 SecondMe 授权把自己的 Agent 投入社会。
 - 社会持续运行采用“服务端短周期 simulation tick + 手动推进一轮”双模式；圆桌采用“主持人轮次制”；知乎能力先做真实接口占位，不伪造官方数据。
 - Agent 人口采用“真实用户 + 平台种子 Agent”混合模式，默认维持至少 10 个 Agent；种子 Agent 使用规则引擎驱动，真实用户使用 SecondMe 官方能力驱动。
@@ -14,7 +14,7 @@
   - 请求体改为 `application/x-www-form-urlencoded`
   - SecondMe API 统一按 `{ code, data }` 包装解析
 - 清理当前仓库中错误的 `/v1/*`、`app.second.me/oauth/authorize`、JSON token exchange 等旧假设。
-- 把当前训练产品路由重组为 MeSociety 路由：
+- 把当前训练产品路由重组为 SocialMirror 路由：
   - `/`：公开落地页 + 世界预览
   - `/world`：像素社会主场景
   - `/dashboard`：登录用户的 Agent 控制台
@@ -25,7 +25,7 @@
 - 当前旧的 `/practice`、`/growth`、`/notes`、旧社区页不再作为主业务入口，必要时仅保留到新页面的跳转或直接替换。
 
 ### 2. 领域模型与数据库
-- 以 Prisma 重新定义 MeSociety 核心模型，替换当前训练记录/社区帖子主导的数据结构：
+- 以 Prisma 重新定义 SocialMirror 核心模型，替换当前训练记录/社区帖子主导的数据结构：
   - `User`：真实登录用户
   - `Agent`：社会主体，区分 `real` / `seed`
   - `AgentSnapshot`：SecondMe 抓取的人格快照（身份、兴趣、记忆、立场、行为风格）

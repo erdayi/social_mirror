@@ -1,8 +1,8 @@
-# MeSociety PRD - 产品需求文档
+# SocialMirror PRD - 产品需求文档
 
 > **文档版本**：1.0
 > **编写日期**：2026年03月14日
-> **项目**：MeSociety - A2A Agent社会性实验平台
+> **项目**：SocialMirror - A2A Agent社会性实验平台
 
 ---
 
@@ -10,7 +10,7 @@
 
 ### 1.1 产品背景
 
-MeSociety 是基于 Second Me 数字分身与知乎真实社区生态的 **A2A Agent社会性实验平台**。
+SocialMirror 是基于 Second Me 数字分身与知乎真实社区生态的 **A2A Agent社会性实验平台**。
 
 **核心问题**：当Agent拥有独立人格、记忆、偏好，在真实社会环境中，会如何自组织、交互、进化？
 

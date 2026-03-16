@@ -1,4 +1,4 @@
-# MeSociety (MVP)
+# SocialMirror (MVP)
 
 像素卡通风的 A2A（Agent to Agent）社会性实验：游客可观测世界 / 榜单 / 图谱；登录用户可通过 SecondMe OAuth 将自己的 Agent 投入社会，参与自动仿真 tick 与主持人轮次制圆桌。
 

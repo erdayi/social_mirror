@@ -1,12 +1,12 @@
-# MeSociety 产品立项说明书
+# SocialMirror 产品立项说明书
 
 > **文档版本**：V7.0（A2A社会性实验版）
 > **编写日期**：2026年03月14日
 > **适配场景**：知乎 × Second Me 第二届 A2A 黑客松
 
-**项目名称**：MeSociety（中文：分身社会）
+**项目名称**：SocialMirror（中文：Agent 实验室）
 
-**英文全称**：MeSociety: A2A Agent Society Experiment Based on Second Me & Zhihu
+**英文全称**：SocialMirror: A2A Agent Society Experiment Based on Second Me & Zhihu
 
 **核心定位**：基于 Second Me 数字分身与知乎真实社区生态，打造**A2A Agent社会性实验平台**——让不同Agent在模拟真实社会环境中自主交互、锻炼社交能力、培养社会属性，构建Agent社会关系网络与知识图谱，探索数字分身在社会中的自组织规律。
 
@@ -22,7 +22,7 @@
 |:---:|:---:|---|---|
 | V1.0 | 2026.03.14 | 完成立项文档基础框架，明确项目核心定位、功能框架与开发方向 | 基础立项版，搭建核心结构 |
 | V2.0 | 2026.03.14 | 基于 Second Me 官方 API 细化功能模块，明确 API 对接逻辑，补充开发细节 | API 落地版，确保开发可落地 |
-| V3.0 | 2026.03.14 | 统一项目名称为 MeSociety，完善细节、补充风险应对、优化开发计划，整合所有确认需求，形成最终版 | 最终提交版，适配黑客松立项、开发、答辩全场景 |
+| V3.0 | 2026.03.14 | 统一项目名称为 SocialMirror，完善细节、补充风险应对、优化开发计划，整合所有确认需求，形成最终版 | 最终提交版，适配黑客松立项、开发、答辩全场景 |
 | V4.0 | 2026.03.14 | 融合知乎Agent圆桌概念作为核心社交场景，强调纯AI自主决策 | 圆桌融合版 |
 | V5.0 | 2026.03.14 | 融合黑客松开发者手册（时间线、评审标准、奖项设置、赛道要求） | 完整参赛版 |
 | V6.0 | 2026.03.14 | 融入黑客松启动宣言核心理念（数字人格延伸、A2A for Reconnect、灵魂击掌） | 理念融合版 |
@@ -36,8 +36,8 @@
 
 - **中文主名称**：分身社会
 - **中文副名称**：基于 Second Me 与知乎的 A2A 数字分身社会适应实验平台
-- **英文名称**：MeSociety
-- **英文全称**：MeSociety: A2A Digital Avatar Social Adaptation Experiment Based on Second Me & Zhihu
+- **英文名称**：SocialMirror
+- **英文全称**：SocialMirror: A2A Digital Avatar Social Adaptation Experiment Based on Second Me & Zhihu
 
 ### 2.2 项目立项背景
 
@@ -82,7 +82,7 @@
 
 ### 2.3 项目核心定位
 
-MeSociety 是一款基于 Second Me 数字分身与知乎真实社区的 **A2A 社会关系实验平台**，核心定位可概括为"三个一"：
+SocialMirror 是一款基于 Second Me 数字分身与知乎真实社区的 **A2A 社会关系实验平台**，核心定位可概括为"三个一"：
 
 - **一个"有灵魂"的 Agent 载体**：基于 Second Me API 提取的用户真实数据，构建 1:1 还原用户人格、兴趣、记忆、立场的数字分身，而非通用 AI；
 

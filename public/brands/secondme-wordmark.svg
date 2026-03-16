@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="176" height="48" viewBox="0 0 176 48" fill="none">
-  <rect x="1" y="1" width="174" height="46" rx="12" fill="#171224" stroke="#5F53A2" stroke-width="2"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="176" height="40" viewBox="0 0 176 40" fill="none">
+  <rect x="1" y="1" width="174" height="38" rx="12" fill="#171224" stroke="#5F53A2" stroke-width="2"/>
   <rect x="10" y="10" width="28" height="28" fill="#10192B"/>
   <rect x="14" y="14" width="4" height="4" fill="#5DE1FF"/>
   <rect x="18" y="14" width="4" height="4" fill="#5DE1FF"/>
@@ -18,6 +18,5 @@
   <rect x="26" y="26" width="4" height="4" fill="#5DE1FF"/>
   <rect x="30" y="26" width="4" height="4" fill="#5DE1FF"/>
   <rect x="26" y="30" width="4" height="4" fill="#5DE1FF"/>
-  <text x="48" y="21" fill="#F4E8C9" font-family="Courier New, monospace" font-size="10" font-weight="700" letter-spacing="2">SECONDME</text>
-  <text x="48" y="34" fill="#77E9FF" font-family="Courier New, monospace" font-size="8" font-weight="700" letter-spacing="1.2">REAL AGENT CONNECT</text>
+  <text x="48" y="24" fill="#F4E8C9" font-family="Courier New, monospace" font-size="11" font-weight="700" letter-spacing="2">SECONDME</text>
 </svg>
