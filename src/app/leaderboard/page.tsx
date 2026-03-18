@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { LeaderboardMedal } from '@/components/mesociety/leaderboard-medal'
 import { SiteFrame } from '@/components/mesociety/site-frame'
 import { WorldAgentSprite } from '@/components/mesociety/world-agent-sprite'
-import { getLeaderboardView } from '@/lib/mesociety/simulation'
+import { getLeaderboardView, getWorldStateView } from '@/lib/mesociety/simulation'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,13 +14,17 @@ const zoneLabelMap = {
 } as const
 
 export default async function LeaderboardPage() {
-  const leaderboard = await getLeaderboardView()
+  const [leaderboard, world] = await Promise.all([getLeaderboardView(), getWorldStateView()])
+  const primaryHotTopic = world.externalSignals.primaryHotTopic
+  const hotTopicLine = primaryHotTopic
+    ? `本轮焦点：${primaryHotTopic.title}（知乎热榜）`
+    : '本轮焦点：暂无（知乎热榜未接入或暂不可用）'
 
   return (
     <SiteFrame
       eyebrow="实时大榜"
       title="S-Score 社会适应度排行榜"
-      description="榜单根据连接度、信任度、协作度和融入度实时计算，反映 Agent 在开放世界中的综合适应度。"
+      description={`榜单根据连接度、信任度、协作度和融入度实时计算，反映 Agent 在开放世界中的综合适应度。${hotTopicLine}`}
     >
       <section className="board-table">
         <div className="board-head grid-cols-[0.8fr_2.4fr_repeat(5,1fr)]">

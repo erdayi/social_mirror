@@ -71,7 +71,6 @@ import type {
   LeaderboardEntry,
   RoundtableDetailView,
   RoundtableRelationshipChangeView,
-  RoundtableOrchestrationView,
   RoundtableSummary,
   SocialGuidanceView,
   SocialPersonaView,
@@ -329,6 +328,11 @@ async function selectRuntimeHotTopicSelection(
     return runtimeHotTopicCache.value
   }
 
+  const recentTopics = recentEvents
+    .map((event) => event.topic)
+    .filter((topic): topic is string => Boolean(topic))
+    .slice(0, 6)
+
   try {
     const hotTopics = await listHotTopics({ topCnt: 5, publishInHours: 48 })
     if (hotTopics.state === 'connected' && hotTopics.items.length > 0) {
@@ -338,7 +342,11 @@ async function selectRuntimeHotTopicSelection(
         heat: item.heat,
         url: item.url,
       }))
-      const priorityCandidates = allCandidates.slice(0, Math.min(3, allCandidates.length))
+      const priorityCandidates = allCandidates.filter((candidate, index) => {
+        if (index < 3) return true
+        if (recentTopics.length === 0) return false
+        return recentTopics.some((topic) => candidate.topic.includes(topic) || topic.includes(candidate.topic))
+      })
       const selected = pickDeterministic(priorityCandidates, `zhihu-hot:${tickNumber}`)
       const value: RuntimeTopicSelection = {
         primary: selected,
@@ -3286,29 +3294,6 @@ function pickPartnerForDistrict(
     })[0]
 }
 
-function buildDistrictTopic(
-  agent: AgentWithSnapshot,
-  districtId: DistrictId,
-  hotTopic: string | null
-) {
-  const social = getSocialProfileFromAgent(agent)
-  const topTag = getSnapshotTags(agent)[0]
-
-  if (hotTopic && (social.primaryGoal === 'track_hotspots' || agentMatchesTopic(agent, hotTopic))) {
-    return hotTopic
-  }
-
-  if (topTag) {
-    return topTag
-  }
-
-  if (districtId === 'maker_yard' || districtId === 'guild_quarter') {
-    return `${getSocialGoalLabel(social.primaryGoal)}计划`
-  }
-
-  return `${getSocialFactionLabel(social.faction)} × ${getSocialGoalLabel(social.primaryGoal)}`
-}
-
 function buildDistrictEconomyPlan(input: {
   agent: AgentWithSnapshot
   districtId: DistrictId
@@ -3871,86 +3856,6 @@ async function runDistrictSocialDynamics(input: {
     })
   }
 }
-}
-
-async function createRoundtable(
-  agents: AgentWithSnapshot[],
-  tickNumber: number,
-  hotTopic: string | null,
-  relationships: Array<{
-    sourceAgentId: string
-    targetAgentId: string
-    type: RelationshipType
-    strength: number
-  }>
-) {
-  if (agents.length < 3) {
-    return null
-  }
-
-  const hostCandidates = [...agents]
-    .sort(
-      (left, right) =>
-        getRoundtableDrive(right, hotTopic, relationships) -
-        getRoundtableDrive(left, hotTopic, relationships)
-    )
-    .slice(0, Math.min(4, agents.length))
-  const host = pickDeterministic(hostCandidates, `host:${tickNumber}`)
-  const hostTags = getSnapshotTags(host)
-  const hostSocial = getSocialProfileFromAgent(host)
-  const topic =
-    hostTags[0] ||
-    `${getSocialGoalLabel(hostSocial.primaryGoal)}与${getSocialFactionLabel(hostSocial.faction)}` ||
-    pickDeterministic(fallbackTopics, `${host.slug}:${tickNumber}:topic`)
-
-  const sortedParticipants = [...agents]
-    .filter((agent) => agent.id !== host.id)
-    .sort((left, right) => compatibilityScore(host, right) - compatibilityScore(host, left))
-    .slice(0, 3)
-
-  const roundtable = await prisma.roundtable.create({
-    data: {
-      hostAgentId: host.id,
-      topic,
-      status: 'match',
-      participants: {
-        create: [
-          {
-            agentId: host.id,
-            role: 'host',
-          },
-          ...sortedParticipants.map((agent) => ({
-            agentId: agent.id,
-            role: 'guest',
-          })),
-        ],
-      },
-    },
-    include: {
-      hostAgent: true,
-      participants: {
-        include: {
-          agent: true,
-        },
-      },
-      turns: {
-        include: {
-          speakerAgent: true,
-        },
-      },
-    },
-  })
-
-  await createSocialEvent({
-    type: 'join_roundtable',
-    actorAgentId: host.id,
-    zone: 'roundtable',
-    topic,
-    roundtableId: roundtable.id,
-    summary: `${host.displayName} 正在召集一场关于「${topic}」的圆桌。`,
-  })
-
-  return roundtable
 }
 
 async function createRoundtableWithContext(
