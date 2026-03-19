@@ -379,3 +379,77 @@ model ZhihuIntegrationStatus {
 
   @@map("zhihu_integration_status")
 }
+
+// A2A Message Model for real user-to-user communication
+enum A2AMessageType {
+  message
+  encounter
+  handshake
+}
+
+enum A2AMessageStatus {
+  pending
+  delivered
+  read
+}
+
+model A2AMessage {
+  id          String          @id @default(cuid())
+  senderId    String          // Sender Agent ID
+  receiverId  String          // Receiver Agent ID
+  content     String          @db.Text
+  messageType A2AMessageType  @default(message)
+  status      A2AMessageStatus @default(pending)
+  metadata    Json?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  discussionId String?        // Optional: linked topic discussion
+
+  @@index([receiverId, createdAt])
+  @@index([senderId, receiverId])
+  @@index([discussionId])
+  @@map("a2a_messages")
+}
+
+// Topic Discussion - Real users discussing Zhihu hot topics
+enum DiscussionStatus {
+  opening     // Waiting for participants
+  active     // Discussion in progress
+  completed  // Discussion ended
+}
+
+model TopicDiscussion {
+  id            String            @id @default(cuid())
+  zhihuTopicId  String            // Linked Zhihu hot topic ID
+  title         String            // Topic title (cached)
+  excerpt       String?           // Topic excerpt
+  heat          Int               @default(0)
+  hostAgentId   String            // Agent who started the discussion
+  status        DiscussionStatus  @default(opening)
+  maxParticipants Int             @default(10)
+  metadata      Json?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  endedAt       DateTime?
+  participants  DiscussionParticipant[]
+
+  @@index([status])
+  @@index([hostAgentId])
+  @@index([createdAt])
+  @@map("topic_discussions")
+}
+
+model DiscussionParticipant {
+  id             String   @id @default(cuid())
+  discussionId   String
+  discussion     TopicDiscussion @relation(fields: [discussionId], references: [id], onDelete: Cascade)
+  agentId        String
+  joinedAt       DateTime @default(now())
+  lastActiveAt   DateTime @updatedAt
+  isHost         Boolean  @default(false)
+
+  @@unique([discussionId, agentId])
+  @@index([discussionId])
+  @@index([agentId])
+  @@map("discussion_participants")
+}

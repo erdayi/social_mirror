@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { LogoutButton } from '@/components/mesociety/logout-button'
+import { A2ANavButton } from '@/components/mesociety/a2a-nav-button'
 
 type SessionView = {
   user: {
@@ -45,6 +46,8 @@ export function GlobalNav({ session }: Props) {
               {item.label}
             </Link>
           ))}
+          {/* 消息入口 - 仅登录用户可见 */}
+          {session?.agent && <A2ANavButton />}
         </nav>
 
         <div className="global-nav-meta">
