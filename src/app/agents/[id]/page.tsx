@@ -364,7 +364,7 @@ export default async function AgentDetailPage({
             </p>
             {detail.economy.resources.length ? (
               <div className="mt-4 space-y-3">
-                {detail.economy.resources.map((resource) => (
+                {(detail.economy.resources as Array<{ resource: string; label: string; producedUnits: number; receivedUnits: number; dividendUnits: number; sharedUnits: number; consumedUnits: number; investedUnits: number; netUnits: number }>).map((resource) => (
                   <div key={resource.resource} className="pixel-chat-line">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-sm font-black text-[#ffe9ae]">{resource.label}</p>
