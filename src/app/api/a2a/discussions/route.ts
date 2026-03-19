@@ -10,6 +10,8 @@ import {
   getDiscussionWithParticipants,
 } from '@/lib/a2a/discussion'
 
+export const dynamic = 'force-dynamic'
+
 // GET /api/a2a/discussions - Get available topics and discussions
 export async function GET(request: NextRequest) {
   try {
