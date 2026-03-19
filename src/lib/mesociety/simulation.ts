@@ -78,8 +78,9 @@ import {
 } from '@/lib/mesociety/view-builders'
 import type {
   AgentDetailView,
-  AllianceDividendRouteView,
   AgentEconomyView,
+  AgentResourceInventoryView,
+  AllianceDividendRouteView,
   AgentSocietyStats,
   AgentWithSnapshot,
   BehaviorInsightView,
@@ -4907,6 +4908,12 @@ async function recomputeScores(tickNumber: number) {
         evidenceScore: zhihuMetrics.evidenceScore,
         consensusCount,
         stabilityScore,
+        allianceDividendUnits: 0,
+        exchangeCount: 0,
+        resourceOutputUnits: 0,
+        investmentUnits: 0,
+        prosperityScore: 0,
+        supportBalance: 0,
       })
 
       // 先插入记录，rankOverall 设为 null，稍后统一更新
@@ -6476,7 +6483,7 @@ export async function getAgentsDirectoryView(options: ViewReadOptions = {}) {
   )
 }
 
-export async function getAgentDetailView(agentId: string, options: ViewReadOptions = {}) {
+export async function getAgentDetailView(agentId: string, options: ViewReadOptions = {}): Promise<AgentDetailView | null> {
   if (options.allowTick) {
     await maybeRunSimulationTick()
   }
@@ -6561,14 +6568,14 @@ export async function getAgentDetailView(agentId: string, options: ViewReadOptio
       const snapshot = getLatestSnapshot(agent)
       const agentView = buildWorldAgentView(agent)
       const latestScore = leaderboard.find((item) => item.agentId === agent.id) || null
-      const economy = {
+      const economy: AgentEconomyView = {
         totalInventoryUnits: 0,
         consumptionUnits: 0,
         investmentUnits: 0,
         supportBalance: 0,
         stewardshipLabel: '已退出主叙事',
         dominantResource: '不再展示',
-        resources: [],
+        resources: [] as AgentResourceInventoryView[],
         allianceDividend: {
           receivedUnits: 0,
           sharedUnits: 0,

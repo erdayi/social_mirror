@@ -21,6 +21,72 @@ import type {
 } from '@/lib/mesociety/social'
 import type { DistrictId } from '@/lib/mesociety/world-map'
 
+export type DiscussionSource = 'zhihu_hot' | 'zhihu_ring' | 'trusted_search' | 'memory' | 'relationship' | 'system'
+
+// Agent Intent View
+export type AgentIntentView = {
+  agentId: string
+  name: string
+  zone: string
+  districtLabel: string
+  currentTarget: string
+  actionLabel: string
+  triggerSource: DiscussionSource
+  triggerLabel: string
+  rationale: string
+  recentSpeech: string | null
+  scoreDeltaLabel: string
+}
+
+// Agent Zhihu Participation View
+export type AgentZhihuParticipationView = {
+  hotTopicHits: number
+  circleActions: number
+  evidenceReferences: number
+  controlledActions: Array<{
+    label: string
+    summary: string
+  }>
+}
+
+// Mascot Brief View
+export type MascotBriefView = {
+  title: string
+  summary: string
+  callout: string
+  assetPath: string | null
+  role: string
+}
+
+// Roundtable Evidence Card View
+export type RoundtableEvidenceCardView = {
+  id: string
+  kind: string
+  title: string
+  summary: string
+  sourceLabel: string
+  href?: string
+}
+
+// Score Explanation View
+export type ScoreExplanationView = {
+  headline: string
+  summary: string
+  drivers: Array<{ label: string; detail: string; value: number }>
+  evidence: string[]
+}
+
+// World Focus View
+export type WorldFocusView = {
+  source: DiscussionSource
+  sourceLabel: string
+  title: string
+  summary?: string
+  reason?: string
+  heatLabel?: string
+  updatedAtLabel?: string
+}
+
 export type AgentWithSnapshot = Agent & {
   snapshots: AgentSnapshot[]
   zonePresence: ZonePresence | null
@@ -249,6 +315,10 @@ export type WorldStateView = {
   intervals: {
     tickMs: number
   }
+  currentFocus?: WorldFocusView
+  agentIntentCards?: AgentIntentView[]
+  mascotBrief?: MascotBriefView
+  activeRoundtables?: RoundtableSummary[]
   zones: Array<{
     id: ZoneType
     label: string
@@ -309,6 +379,9 @@ export type AgentDetailView = {
     } | null
   }
   latestScore: LeaderboardEntry | null
+  currentIntent?: AgentIntentView | null
+  scoreExplanation?: ScoreExplanationView | null
+  zhihuParticipation?: AgentZhihuParticipationView | null
   societyStats: AgentSocietyStats
   economy: AgentEconomyView
   persona: SocialPersonaView
@@ -365,6 +438,8 @@ export type RoundtableRelationshipSummaryView = {
 export type RoundtableSummary = {
   id: string
   topic: string
+  triggerSource?: DiscussionSource
+  triggerSourceLabel?: string
   status: Roundtable['status']
   hostName: string
   hostId: string
@@ -402,6 +477,8 @@ export type RoundtableSummary = {
 }
 
 export type RoundtableDetailView = RoundtableSummary & {
+  evidenceCards?: RoundtableEvidenceCardView[]
+  speakerRationale?: Array<{ agentId: string; name: string; reason: string }>
   orchestration: RoundtableOrchestrationView
   relationshipSummary: RoundtableRelationshipSummaryView
   relationshipChanges: RoundtableRelationshipChangeView[]
@@ -414,6 +491,7 @@ export type GraphView = {
     type: string
     label: string
     size: number
+    summary?: string
   }>
   edges: Array<{
     id: string
@@ -421,6 +499,12 @@ export type GraphView = {
     source: string
     target: string
     weight: number
+    reason?: string
+    triggerSource?: string
+  }>
+  highlights?: Array<{
+    title: string
+    detail: string
   }>
   meta: {
     backend: 'mysql' | 'neo4j'

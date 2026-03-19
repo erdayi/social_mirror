@@ -4,18 +4,22 @@ type ScoreInput = {
   roundtableCount: number
   circleParticipationCount: number
   hotTopicParticipationCount: number
+  referencedCount: number
   trustWeight: number
   allianceWeight: number
   cooperationWeight: number
   contributionScore: number
   zoneDiversity: number
+  topicDiversity: number
   complianceScore: number
-  resourceOutputUnits: number
-  exchangeCount: number
+  stabilityScore: number
   evidenceScore: number
+  consensusCount: number
   allianceDividendUnits: number
-  prosperityScore: number
+  exchangeCount: number
+  resourceOutputUnits: number
   investmentUnits: number
+  prosperityScore: number
   supportBalance: number
 }
 

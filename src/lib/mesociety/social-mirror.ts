@@ -1,20 +1,73 @@
 import type { ZoneType } from '@prisma/client'
 import type {
-  AgentIntentView,
-  AgentZhihuParticipationView,
-  DiscussionSource,
-  MascotBriefView,
-  RoundtableEvidenceCardView,
-  ScoreExplanationView,
   WorldAgentView,
   WorldEventView,
-  WorldFocusView,
   WorldStateView,
   ZhihuCircleSignalView,
   ZhihuHotSignalView,
   ZhihuMascotSignalView,
   ZhihuTrustedSignalView,
+  DiscussionSource,
 } from '@/lib/mesociety/types'
+
+// Define view types locally
+export type AgentIntentView = {
+  agentId: string
+  name: string
+  zone: string
+  districtLabel: string
+  currentTarget: string
+  actionLabel: string
+  triggerSource: DiscussionSource
+  triggerLabel: string
+  rationale: string
+  recentSpeech: string | null
+  scoreDeltaLabel: string
+}
+
+export type AgentZhihuParticipationView = {
+  hotTopicHits: number
+  circleActions: number
+  evidenceReferences: number
+  controlledActions: Array<{
+    label: string
+    summary: string
+  }>
+}
+
+export type MascotBriefView = {
+  title: string
+  summary: string
+  callout: string
+  assetPath: string | null
+  role: string
+}
+
+export type RoundtableEvidenceCardView = {
+  id: string
+  kind: string
+  title: string
+  summary: string
+  sourceLabel: string
+  href?: string
+}
+
+export type ScoreExplanationView = {
+  headline: string
+  summary: string
+  drivers: Array<{ label: string; detail: string; value: number }>
+  evidence: string[]
+}
+
+export type WorldFocusView = {
+  source: DiscussionSource
+  sourceLabel: string
+  title: string
+  summary?: string
+  reason?: string
+  heatLabel?: string
+  updatedAtLabel?: string
+}
 
 function formatTimeLabel(value: string | Date | null | undefined) {
   if (!value) {

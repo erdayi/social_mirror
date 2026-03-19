@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentAgent } from '@/lib/auth'
 import { discoverAgents } from '@/lib/a2a/service'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(request: NextRequest) {
   try {
     const agent = await getCurrentAgent()
