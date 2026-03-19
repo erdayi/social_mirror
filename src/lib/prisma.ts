@@ -15,10 +15,11 @@ const prismaLogLevels: Prisma.LogLevel[] =
     ? ['query', 'error', 'warn']
     : ['error', 'warn']
 
-// 添加连接池限制
-const databaseUrl = process.env.DATABASE_URL.includes('connection_limit')
-  ? process.env.DATABASE_URL
-  : process.env.DATABASE_URL + '&connection_limit=3&pool_timeout=60'
+// 添加连接池限制，强制设置
+let databaseUrl = process.env.DATABASE_URL
+const hasParams = databaseUrl.includes('?')
+const separator = hasParams ? '&' : '?'
+databaseUrl = databaseUrl + separator + 'connection_limit=3&pool_timeout=60'
 
 export const prisma =
   globalForPrisma.prisma ??
