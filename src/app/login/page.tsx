@@ -7,6 +7,7 @@ import { hasSecondMeCredentials } from '@/lib/env'
 import { getLandingView, getSessionView } from '@/lib/mesociety/simulation'
 
 export const dynamic = 'force-dynamic'
+export const revalidate = 30 // 缓存 30 秒
 
 const authMessages: Record<string, string> = {
   access_denied: 'SecondMe 授权被取消，你可以重新发起登录。',
