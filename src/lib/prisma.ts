@@ -19,7 +19,9 @@ const prismaLogLevels: Prisma.LogLevel[] =
 let databaseUrl = process.env.DATABASE_URL
 const hasParams = databaseUrl.includes('?')
 const separator = hasParams ? '&' : '?'
-databaseUrl = databaseUrl + separator + 'connection_limit=3&pool_timeout=60'
+// 生产环境限制更严格
+const limit = process.env.NODE_ENV === 'production' ? '1' : '3'
+databaseUrl = databaseUrl + separator + `connection_limit=${limit}&pool_timeout=30`
 
 export const prisma =
   globalForPrisma.prisma ??
