@@ -162,7 +162,7 @@ const fallbackTopics = [
   '知识图谱能否描述真实关系',
 ]
 
-const VIEW_CACHE_TTL_MS = 15_000
+const VIEW_CACHE_TTL_MS = 60_000 // 缓存 60 秒，减少数据库查询
 const HOT_TOPIC_CACHE_TTL_MS = 60_000
 
 type ViewReadOptions = {
